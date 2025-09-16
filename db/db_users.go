@@ -14,6 +14,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+var dbUsers *sql.DB
+
 const schemaUsers string = `
 CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,8 +37,6 @@ CREATE TABLE users (
     last_login DATETIME,
     last_activity DATETIME
 );`
-
-var dbUsers *sql.DB
 
 type User struct {
 	ID           int64  `json:"id"`
