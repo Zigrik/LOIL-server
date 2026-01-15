@@ -1,0 +1,95 @@
+{
+  "player_id": 0,
+  "characters": [
+    {
+      "id": 1,
+      "name": "Bob",
+      "location": 1,
+      "x": 0,
+      "speed": 0.7,
+      "direction": 0,
+      "controlled": -1
+    },
+    {
+      "id": 2,
+      "name": "Zigrik",
+      "location": 1,
+      "x": 15.282553470000009,
+      "speed": 0.7,
+      "direction": -1,
+      "controlled": 0
+    }
+  ],
+  "locations": [
+    {
+      "id": 1,
+      "name": "Дорога 1",
+      "road_tiles": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "transitions": {
+        "left_down": null,
+        "left_up": null,
+        "right_down": null,
+        "right_up": {
+          "location_id": 2,
+          "type": "right_up"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Дорога 2",
+      "road_tiles": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "transitions": {
+        "left_down": null,
+        "left_up": {
+          "location_id": 1,
+          "type": "left_up"
+        },
+        "right_down": null,
+        "right_up": null
+      }
+    }
+  ]
+}
