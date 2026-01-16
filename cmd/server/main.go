@@ -25,21 +25,20 @@ func main() {
 	// Запускаем игровой цикл в горутине
 	go g.RunGameLoop()
 
-	// Запускаем обработчик ввода
-	runInputHandler(g)
+	// Запускаем обработчик ввода (чистые игровые команды)
+	runGameInputHandler(g)
 
 	fmt.Println("Игра завершена.")
 }
 
-func runInputHandler(g *game.Game) {
+func runGameInputHandler(g *game.Game) {
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Println("=== ИГРА ЗАПУЩЕНА ===")
-	fmt.Println("Команды: a/d - влево/вправо, w/s - вверх/вниз, stop - остановка, x - состояние, save - сохранить, exit - выход")
-	g.PrintState()
+	fmt.Println("Игровые команды: a/d - влево/вправо, w/s - вверх/вниз, stop - остановка, exit - выход")
 
 	for {
-		fmt.Print("\nВведите команду: ")
+		fmt.Print("\n> ")
 		input, _ := reader.ReadString('\n')
 		input = strings.TrimSpace(input)
 
@@ -49,14 +48,11 @@ func runInputHandler(g *game.Game) {
 
 		if input == "exit" {
 			g.InputChan <- input
-			// Даем время на завершение
 			time.Sleep(100 * time.Millisecond)
 			break
 		}
 
 		g.InputChan <- input
-
-		// Небольшая задержка для вывода
 		time.Sleep(50 * time.Millisecond)
 	}
 }

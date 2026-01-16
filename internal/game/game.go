@@ -6,8 +6,16 @@ import (
 	"time"
 )
 
+// Структура для хранения состояния всех слоев локации
+type LocationState struct {
+	Foreground []int
+	Road       []int
+	Ground     []int
+	Background []int
+}
+
 type GameState struct {
-	LocationTiles   map[int][]int
+	LocationStates  map[int]*LocationState
 	CharsByLocation map[int][]*world.Character
 	LastUpdate      int64
 	Running         bool
@@ -21,9 +29,33 @@ type Game struct {
 	InputChan  chan string
 }
 
+// GetDebugLocationStates возвращает состояния локаций для отладки
+func (g *Game) GetDebugLocationStates() map[int]*DebugLocationState {
+	result := make(map[int]*DebugLocationState)
+
+	for id, state := range g.State.LocationStates {
+		result[id] = &DebugLocationState{
+			Foreground: state.Foreground,
+			Road:       state.Road,
+			Ground:     state.Ground,
+			Background: state.Background,
+		}
+	}
+
+	return result
+}
+
+// DebugLocationState - структура для отладочного вывода
+type DebugLocationState struct {
+	Foreground []int
+	Road       []int
+	Ground     []int
+	Background []int
+}
+
 func NewGame(w *world.World) *Game {
 	state := &GameState{
-		LocationTiles:   make(map[int][]int),
+		LocationStates:  make(map[int]*LocationState),
 		CharsByLocation: make(map[int][]*world.Character),
 		Running:         true,
 	}
@@ -38,18 +70,33 @@ func NewGame(w *world.World) *Game {
 }
 
 func (g *Game) Initialize() {
-	// Инициализируем тайлы локаций
+	// Инициализируем все слои для каждой локации
 	for _, loc := range g.World.Locations {
-		g.State.LocationTiles[loc.ID] = make([]int, len(loc.RoadTiles))
-		copy(g.State.LocationTiles[loc.ID], loc.RoadTiles)
+		state := &LocationState{
+			Foreground: make([]int, len(loc.Foreground)),
+			Road:       make([]int, len(loc.Road)),
+			Ground:     make([]int, len(loc.Ground)),
+			Background: make([]int, len(loc.Background)),
+		}
+
+		// Копируем данные из мира
+		copy(state.Foreground, []int(loc.Foreground))
+		copy(state.Road, []int(loc.Road))
+		copy(state.Ground, []int(loc.Ground))
+		copy(state.Background, []int(loc.Background))
+
+		g.State.LocationStates[loc.ID] = state
 		g.State.CharsByLocation[loc.ID] = []*world.Character{}
 	}
 
 	// Распределяем персонажей по локациям
 	for _, char := range g.World.Characters {
 		pos := int(char.X + 0.5)
-		if pos >= 0 && pos < len(g.State.LocationTiles[char.Location]) {
-			g.State.LocationTiles[char.Location][pos] = char.ID
+		locState := g.State.LocationStates[char.Location]
+
+		if pos >= 0 && pos < len(locState.Road) {
+			// Сохраняем ID персонажа в слое переднего плана
+			locState.Foreground[pos] = char.ID
 			g.State.CharsByLocation[char.Location] = append(g.State.CharsByLocation[char.Location], char)
 		}
 	}
@@ -61,9 +108,10 @@ func (g *Game) UpdateCharacter(char *world.Character, elapsed float64) bool {
 	}
 
 	locID := char.Location
-	tiles := g.State.LocationTiles[locID]
+	locState := g.State.LocationStates[locID]
+	roadLayer := locState.Road
 
-	if len(tiles) == 0 {
+	if len(roadLayer) == 0 {
 		return false
 	}
 
@@ -73,8 +121,8 @@ func (g *Game) UpdateCharacter(char *world.Character, elapsed float64) bool {
 		char.X += float64(char.Direction) * char.Speed * elapsed
 
 		// Проверка границ локации
-		if char.Direction == 1 && char.X >= float64(len(tiles)-1) {
-			char.X = float64(len(tiles) - 1)
+		if char.Direction == 1 && char.X >= float64(len(roadLayer)-1) {
+			char.X = float64(len(roadLayer) - 1)
 			g.TryTransition(char, "right")
 			return true
 		} else if char.Direction == -1 && char.X <= 0 {
@@ -85,25 +133,61 @@ func (g *Game) UpdateCharacter(char *world.Character, elapsed float64) bool {
 
 		// Обновление позиции в тайлах
 		newPos := int(char.X + 0.5)
-		if newPos != oldPos && newPos >= 0 && newPos < len(tiles) {
-			// Проверка столкновения
-			if tiles[newPos] != 0 && tiles[newPos] != char.ID {
-				fmt.Printf("\n[СТОЛКНОВЕНИЕ] На клетке %d персонаж с ID: %d\n", newPos, tiles[newPos])
+		if newPos != oldPos && newPos >= 0 && newPos < len(roadLayer) {
+			// Проверка дороги
+			if roadLayer[newPos] == -1 {
+				// Нет дороги - движение невозможно
+				fmt.Printf("[ПРЕПЯТСТВИЕ] %s не может идти по этой местности\n", char.Name)
+				char.X = float64(oldPos)
+				return false
+			}
+
+			// Проверка столкновения с другими персонажами
+			if locState.Foreground[newPos] != 0 && locState.Foreground[newPos] != char.ID {
+				fmt.Printf("[СТОЛКНОВЕНИЕ] На клетке %d персонаж с ID: %d\n", newPos, locState.Foreground[newPos])
 				char.X = float64(oldPos)
 				return false
 			}
 
 			// Освобождаем старую позицию
-			if oldPos >= 0 && oldPos < len(tiles) {
-				tiles[oldPos] = 0
+			if oldPos >= 0 && oldPos < len(locState.Foreground) {
+				locState.Foreground[oldPos] = 0
 			}
 
 			// Занимаем новую позицию
-			tiles[newPos] = char.ID
+			locState.Foreground[newPos] = char.ID
+
+			// Проверяем тип поверхности под ногами
+			g.CheckGroundType(char, newPos)
+
 			return true
 		}
 	}
 	return false
+}
+
+func (g *Game) CheckGroundType(char *world.Character, pos int) {
+	locState := g.State.LocationStates[char.Location]
+	if pos < 0 || pos >= len(locState.Ground) {
+		return
+	}
+
+	groundType := locState.Ground[pos]
+
+	switch groundType {
+	case -2: // Река
+		char.Speed = 0.3 // Замедление в реке
+	case -1: // Ручей
+		char.Speed = 0.5 // Среднее замедление
+	case 1: // Песок
+		char.Speed = 0.6 // Легкое замедление
+	case 2: // Глина
+		char.Speed = 0.8 // Почти нормально
+	case 3: // Камень
+		char.Speed = 1.0 // Нормальная скорость
+	default: // Земля (0)
+		char.Speed = 0.7 // Базовая скорость
+	}
 }
 
 func (g *Game) TryTransition(char *world.Character, side string) {
@@ -119,7 +203,6 @@ func (g *Game) TryTransition(char *world.Character, side string) {
 		} else if char.Vertical == -1 {
 			transitionKey = "left_down"
 		} else {
-			// Если нет вертикального направления, остаемся на месте
 			char.Direction = 0
 			return
 		}
@@ -129,7 +212,6 @@ func (g *Game) TryTransition(char *world.Character, side string) {
 		} else if char.Vertical == -1 {
 			transitionKey = "right_down"
 		} else {
-			// Если нет вертикального направления, остаемся на месте
 			char.Direction = 0
 			return
 		}
@@ -139,37 +221,39 @@ func (g *Game) TryTransition(char *world.Character, side string) {
 		// Удаляем из старой локации
 		oldLocID := char.Location
 		oldPos := int(char.X + 0.5)
-		if oldPos >= 0 && oldPos < len(g.State.LocationTiles[oldLocID]) {
-			g.State.LocationTiles[oldLocID][oldPos] = 0
+		oldLocState := g.State.LocationStates[oldLocID]
+
+		if oldPos >= 0 && oldPos < len(oldLocState.Foreground) {
+			oldLocState.Foreground[oldPos] = 0
 		}
 		g.State.CharsByLocation[oldLocID] = g.removeCharFromSlice(g.State.CharsByLocation[oldLocID], char)
 
 		// Перемещаем в новую локацию
 		char.Location = trans.LocationID
-		newTiles := g.State.LocationTiles[char.Location]
+		newLocState := g.State.LocationStates[char.Location]
 
 		if side == "left" {
-			char.X = float64(len(newTiles) - 1)
-			char.Direction = 0 // Останавливаемся после перехода
+			char.X = float64(len(newLocState.Road) - 1)
+			char.Direction = 0
 		} else {
 			char.X = 0
-			char.Direction = 0 // Останавливаемся после перехода
+			char.Direction = 0
 		}
-		char.Vertical = 0 // Сбрасываем вертикальное направление
+		char.Vertical = 0
+		char.Speed = 0.7 // Сбрасываем скорость к базовой
 
 		// Добавляем в новую локацию
 		newPos := int(char.X + 0.5)
-		if newPos >= 0 && newPos < len(newTiles) {
-			newTiles[newPos] = char.ID
+		if newPos >= 0 && newPos < len(newLocState.Foreground) {
+			newLocState.Foreground[newPos] = char.ID
 		}
 		g.State.CharsByLocation[char.Location] = append(g.State.CharsByLocation[char.Location], char)
 
-		fmt.Printf("\n%s перешел в локацию %d\n", char.Name, char.Location)
+		fmt.Printf("%s перешел в локацию %d\n", char.Name, char.Location)
 		g.UpdateChan <- true
 	} else {
-		// Если перехода нет, останавливаемся
 		char.Direction = 0
-		fmt.Printf("\n%s достиг края, но перехода нет\n", char.Name)
+		fmt.Printf("%s достиг края, но перехода нет\n", char.Name)
 	}
 }
 
@@ -198,48 +282,6 @@ func (g *Game) GetPlayerCharacter() *world.Character {
 		}
 	}
 	return nil
-}
-
-func (g *Game) PrintState() {
-	fmt.Println("\n=== СОСТОЯНИЕ МИРА ===")
-	fmt.Printf("ID игрока: %d\n", g.World.PlayerID)
-
-	for _, loc := range g.World.Locations {
-		fmt.Printf("\nЛокация %d: %s\n", loc.ID, loc.Name)
-		tiles := g.State.LocationTiles[loc.ID]
-
-		fmt.Print("[")
-		for i := 0; i < len(tiles); i++ {
-			if tiles[i] == 0 {
-				fmt.Print(".")
-			} else {
-				for _, char := range g.State.CharsByLocation[loc.ID] {
-					if char.ID == tiles[i] && int(char.X+0.5) == i {
-						fmt.Printf("%c", char.Name[0])
-						break
-					}
-				}
-			}
-			if i < len(tiles)-1 {
-				fmt.Print(" ")
-			}
-		}
-		fmt.Println("]")
-
-		// Персонажи в этой локации
-		if chars, ok := g.State.CharsByLocation[loc.ID]; ok && len(chars) > 0 {
-			fmt.Println("Персонажи:")
-			for _, char := range chars {
-				controlStatus := "NPC"
-				if char.Controlled == g.World.PlayerID {
-					controlStatus = "ИГРОК"
-				}
-				fmt.Printf("  %s (ID: %d) поз: %.1f, напр: %d, верт: %d [%s]\n",
-					char.Name, char.ID, char.X, char.Direction, char.Vertical, controlStatus)
-			}
-		}
-	}
-	fmt.Println("\nКоманды: a/d - влево/вправо, w/s - вверх/вниз, stop - остановка, x - состояние, save - сохранить, exit - выход")
 }
 
 func (g *Game) HandleInput(input string) {
@@ -272,19 +314,11 @@ func (g *Game) HandleInput(input string) {
 		playerChar.Direction = 0
 		playerChar.Vertical = 0
 		fmt.Printf("%s остановился\n", playerChar.Name)
-	case "x":
-		g.PrintState()
-	case "save":
-		if err := world.SaveWorld(g.World, "world.json"); err != nil {
-			fmt.Printf("Ошибка сохранения: %v\n", err)
-		} else {
-			fmt.Println("Мир сохранен в world.json")
-		}
 	case "exit":
 		g.State.Running = false
 		g.ExitChan <- true
 	default:
-		fmt.Println("Неизвестная команда. Доступные: a, d, w, s, stop, x, save, exit")
+		fmt.Println("Неизвестная команда. Доступные: a, d, w, s, stop, exit")
 	}
 }
 
@@ -318,4 +352,29 @@ func (g *Game) RunGameLoop() {
 			}
 		}
 	}
+}
+
+// Методы для отладки (используются debug пакетом)
+
+// GetLocationStates возвращает все состояния локаций
+func (g *Game) GetLocationStates() map[int]*LocationState {
+	return g.State.LocationStates
+}
+
+// GetLocationState возвращает состояние конкретной локации
+func (g *Game) GetLocationState(locationID int) *LocationState {
+	if state, ok := g.State.LocationStates[locationID]; ok {
+		return state
+	}
+	return nil
+}
+
+// GetCharsByLocation возвращает персонажей по локациям
+func (g *Game) GetCharsByLocation() map[int][]*world.Character {
+	return g.State.CharsByLocation
+}
+
+// GetWorld возвращает мир
+func (g *Game) GetWorld() *world.World {
+	return g.World
 }
