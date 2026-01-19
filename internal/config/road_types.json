@@ -1,0 +1,44 @@
+{
+  "dirt_road": {
+    "id": 1,
+    "name": "Грунтовая дорога",
+    "description": "Протоптанная грунтовая дорога",
+    "durability": 100,
+    "speed_mod": 1.0
+  },
+  "trodden_path": {
+    "id": 2,
+    "name": "Утоптанная тропа",
+    "description": "Хорошо утоптанная тропинка",
+    "durability": 80,
+    "speed_mod": 1.1
+  },
+  "cobblestone": {
+    "id": 3,
+    "name": "Булыжная мостовая",
+    "description": "Каменная мостовая",
+    "durability": 200,
+    "speed_mod": 0.9
+  },
+  "mud": {
+    "id": 4,
+    "name": "Грязь",
+    "description": "Грязная размокшая дорога",
+    "durability": 50,
+    "speed_mod": 0.5
+  },
+  "sand_path": {
+    "id": 5,
+    "name": "Песчаная тропа",
+    "description": "Тропа в песчаной местности",
+    "durability": 60,
+    "speed_mod": 0.7
+  },
+  "no_road": {
+    "id": -1,
+    "name": "Нет дороги",
+    "description": "Непроходимая местность",
+    "durability": 0,
+    "speed_mod": 0.3
+  }
+}

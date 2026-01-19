@@ -1,0 +1,152 @@
+{
+  "mushroom": {
+    "id": 1,
+    "name": "Гриб",
+    "description": "Съедобный лесной гриб",
+    "layer": "foreground",
+    "size": 1,
+    "max_durability": 10,
+    "growth_time": 3600,
+    "interactions": [
+      {
+        "type": "pick",
+        "tool": "hand",
+        "time": 2,
+        "results": [
+          {"item_id": 101, "count": 1}
+        ]
+      }
+    ]
+  },
+  "amanita": {
+    "id": 2,
+    "name": "Мухомор",
+    "description": "Ядовитый гриб",
+    "layer": "foreground",
+    "size": 1,
+    "max_durability": 15,
+    "growth_time": 4800,
+    "interactions": [
+      {
+        "type": "pick",
+        "tool": "hand",
+        "time": 2,
+        "results": [
+          {"item_id": 102, "count": 1}
+        ]
+      }
+    ]
+  },
+  "branch": {
+    "id": 3,
+    "name": "Ветка",
+    "description": "Сухая ветка",
+    "layer": "foreground",
+    "size": 1,
+    "max_durability": 5,
+    "growth_time": 0,
+    "interactions": [
+      {
+        "type": "collect",
+        "tool": "hand",
+        "time": 3,
+        "results": [
+          {"item_id": 103, "count": 1}
+        ]
+      }
+    ]
+  },
+  "stone": {
+    "id": 4,
+    "name": "Камень",
+    "description": "Небольшой камень",
+    "layer": "foreground",
+    "size": 1,
+    "max_durability": 50,
+    "growth_time": 0,
+    "interactions": [
+      {
+        "type": "collect",
+        "tool": "hand",
+        "time": 5,
+        "results": [
+          {"item_id": 104, "count": 1}
+        ]
+      },
+      {
+        "type": "mine",
+        "tool": "pickaxe",
+        "time": 10,
+        "results": [
+          {"item_id": 105, "count": 2}
+        ]
+      }
+    ]
+  },
+  "raspberry_bush": {
+    "id": 5,
+    "name": "Куст малины",
+    "description": "Куст с ягодами малины",
+    "layer": "foreground",
+    "size": 2,
+    "max_durability": 30,
+    "growth_time": 7200,
+    "interactions": [
+      {
+        "type": "harvest",
+        "tool": "hand",
+        "time": 5,
+        "results": [
+          {"item_id": 106, "count": 3}
+        ]
+      }
+    ]
+  },
+  "oak_sapling": {
+    "id": 6,
+    "name": "Дуб саженец",
+    "description": "Молодой саженец дуба",
+    "layer": "background",
+    "size": 1,
+    "max_durability": 10,
+    "growth_time": 86400,
+    "interactions": []
+  },
+  "oak_young": {
+    "id": 7,
+    "name": "Дуб молодое дерево",
+    "description": "Подрастающий дуб",
+    "layer": "background",
+    "size": 2,
+    "max_durability": 50,
+    "growth_time": 172800,
+    "interactions": []
+  },
+  "oak_adult": {
+    "id": 8,
+    "name": "Дуб взрослое дерево",
+    "description": "Взрослый дуб",
+    "layer": "background",
+    "size": 3,
+    "max_durability": 100,
+    "growth_time": 0,
+    "interactions": [
+      {
+        "type": "chop",
+        "tool": "axe",
+        "time": 30,
+        "results": [
+          {"item_id": 107, "count": 10}
+        ]
+      },
+      {
+        "type": "collect",
+        "tool": "hand",
+        "time": 5,
+        "results": [
+          {"item_id": 108, "count": 3}
+        ]
+      }
+    ]
+  }
+}

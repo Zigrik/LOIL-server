@@ -1,0 +1,50 @@
+{
+  "earth": {
+    "id": 1,
+    "name": "Земля",
+    "description": "Обычная земля",
+    "walkable": true,
+    "buildable": true,
+    "resource_id": 0
+  },
+  "sand": {
+    "id": 2,
+    "name": "Песок",
+    "description": "Песчаный грунт",
+    "walkable": true,
+    "buildable": true,
+    "resource_id": 0
+  },
+  "clay": {
+    "id": 3,
+    "name": "Глина",
+    "description": "Глинистая почва",
+    "walkable": true,
+    "buildable": true,
+    "resource_id": 3
+  },
+  "stone": {
+    "id": 4,
+    "name": "Камень",
+    "description": "Каменная поверхность",
+    "walkable": true,
+    "buildable": false,
+    "resource_id": 4
+  },
+  "stream": {
+    "id": 5,
+    "name": "Ручей",
+    "description": "Неглубокий ручей",
+    "walkable": true,
+    "buildable": false,
+    "resource_id": 0
+  },
+  "river": {
+    "id": 6,
+    "name": "Река",
+    "description": "Глубокая река",
+    "walkable": false,
+    "buildable": false,
+    "resource_id": 0
+  }
+}

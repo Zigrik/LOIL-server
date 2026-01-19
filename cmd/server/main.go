@@ -1,6 +1,7 @@
 package main
 
 import (
+	"LOIL-server/internal/config"
 	"LOIL-server/internal/game"
 	"LOIL-server/internal/world"
 	"bufio"
@@ -11,8 +12,15 @@ import (
 )
 
 func main() {
-	// Загружаем мир
-	w, err := world.LoadWorld("world.json")
+	// Загружаем конфигурации
+	configs, err := config.LoadConfigs()
+	if err != nil {
+		fmt.Printf("Ошибка загрузки конфигураций: %v\n", err)
+		return
+	}
+
+	// Загружаем мир с конфигами
+	w, err := world.LoadWorld("data/world.json", configs)
 	if err != nil {
 		fmt.Printf("Ошибка загрузки мира: %v\n", err)
 		return
@@ -22,23 +30,24 @@ func main() {
 	g := game.NewGame(w)
 	g.Initialize()
 
-	// Запускаем игровой цикл в горутине
+	// Запускаем игровой цикл
 	go g.RunGameLoop()
 
-	// Запускаем обработчик ввода (чистые игровые команды)
-	runGameInputHandler(g)
+	// Запускаем обработчик ввода
+	runInputHandler(g)
 
 	fmt.Println("Игра завершена.")
 }
 
-func runGameInputHandler(g *game.Game) {
+func runInputHandler(g *game.Game) {
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Println("=== ИГРА ЗАПУЩЕНА ===")
-	fmt.Println("Игровые команды: a/d - влево/вправо, w/s - вверх/вниз, stop - остановка, exit - выход")
+	fmt.Println("Команды: a/d - влево/вправо, w/s - вверх/вниз, stop - остановка, x - состояние, save - сохранить, exit - выход")
+	g.PrintState()
 
 	for {
-		fmt.Print("\n> ")
+		fmt.Print("\nВведите команду: ")
 		input, _ := reader.ReadString('\n')
 		input = strings.TrimSpace(input)
 
