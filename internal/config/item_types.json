@@ -1,0 +1,58 @@
+{
+  "mushroom": {
+    "id": 1,
+    "name": "Гриб",
+    "description": "Съедобный лесной гриб",
+    "type": "food",
+    "stack_size": 10,
+    "weight": 0.1
+  },
+  "amanita": {
+    "id": 2,
+    "name": "Мухомор",
+    "description": "Ядовитый гриб",
+    "type": "resource",
+    "stack_size": 10,
+    "weight": 0.1
+  },
+  "branch": {
+    "id": 3,
+    "name": "Ветка",
+    "description": "Сухая ветка",
+    "type": "resource",
+    "stack_size": 20,
+    "weight": 0.5
+  },
+  "stone": {
+    "id": 4,
+    "name": "Камень",
+    "description": "Небольшой камень",
+    "type": "resource",
+    "stack_size": 10,
+    "weight": 1.0
+  },
+  "raspberry": {
+    "id": 5,
+    "name": "Малина",
+    "description": "Спелая ягода малины",
+    "type": "food",
+    "stack_size": 50,
+    "weight": 0.05
+  },
+  "oak_log": {
+    "id": 6,
+    "name": "Дубовое бревно",
+    "description": "Бревно из дуба",
+    "type": "resource",
+    "stack_size": 5,
+    "weight": 5.0
+  },
+  "acorn": {
+    "id": 7,
+    "name": "Желудь",
+    "description": "Желудь дуба",
+    "type": "seed",
+    "stack_size": 100,
+    "weight": 0.02
+  }
+}

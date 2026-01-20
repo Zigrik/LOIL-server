@@ -5,30 +5,92 @@
       "id": 1,
       "name": "Bob",
       "location": 1,
-      "x": 0.0,
+      "x": 5.0,
       "speed": 0.7,
       "direction": 0,
-      "controlled": -1
+      "controlled": -1,
+      "inventory": {},
+      "equipped": {},
+      "hands_free": true
     },
     {
       "id": 2,
       "name": "Zigrik",
-      "location": 2,
-      "x": 19.0,
+      "location": 1,
+      "x": 10.0,
       "speed": 0.7,
       "direction": 0,
-      "controlled": 0
+      "controlled": 0,
+      "inventory": {},
+      "equipped": {},
+      "hands_free": true
     }
   ],
   "locations": [
     {
       "id": 1,
       "name": "Лесная дорога",
-      "foreground": "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0",
+      "foreground": "0 0 1 0 2 0 3 0 4 0 5 0 0 0 0 0 0 0 0 0",
       "road": "1 1 2 2 2 2 2 2 2 2 2 2 2 2 2 2 1 1 1 1",
       "ground": "1 1 1 1 2 2 1 1 3 3 4 4 3 3 1 1 5 5 5 5",
       "background": "6 7 0 0 0 0 0 8 0 0 0 0 0 0 9 0 0 0 10 11",
-      "objects": {},
+      "objects": {
+        "100": {
+          "id": 100,
+          "type_id": 1,
+          "x": 2,
+          "y": 0,
+          "location_id": 1,
+          "durability": 10,
+          "growth_stage": 100,
+          "storage": {},
+          "custom_data": {}
+        },
+        "101": {
+          "id": 101,
+          "type_id": 2,
+          "x": 4,
+          "y": 0,
+          "location_id": 1,
+          "durability": 15,
+          "growth_stage": 100,
+          "storage": {},
+          "custom_data": {}
+        },
+        "102": {
+          "id": 102,
+          "type_id": 3,
+          "x": 6,
+          "y": 0,
+          "location_id": 1,
+          "durability": 5,
+          "growth_stage": 0,
+          "storage": {},
+          "custom_data": {}
+        },
+        "103": {
+          "id": 103,
+          "type_id": 4,
+          "x": 8,
+          "y": 0,
+          "location_id": 1,
+          "durability": 50,
+          "growth_stage": 0,
+          "storage": {},
+          "custom_data": {}
+        },
+        "104": {
+          "id": 104,
+          "type_id": 5,
+          "x": 10,
+          "y": 0,
+          "location_id": 1,
+          "durability": 30,
+          "growth_stage": 100,
+          "storage": {},
+          "custom_data": {}
+        }
+      },
       "transitions": {
         "left_up": null,
         "left_down": null,

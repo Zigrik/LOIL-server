@@ -2,33 +2,34 @@ package game
 
 import (
 	"LOIL-server/internal/config"
-	"LOIL-server/internal/world"
+	worldpkg "LOIL-server/internal/world" // Переименуем пакет
 	"fmt"
+	"strings"
 	"time"
 )
 
 type Game struct {
-	World      *world.World
+	GameWorld  *worldpkg.World
 	State      *GameState
-	Registries *world.Registries
+	Registries *worldpkg.Registries
 	ExitChan   chan bool
 	UpdateChan chan bool
 	InputChan  chan string
 }
 
-func NewGame(w *world.World) *Game {
+func NewGame(w *worldpkg.World) *Game {
 	// Создаем реестры из конфигов
-	registries := world.NewRegistries(w.Configs)
+	registries := worldpkg.NewRegistries(w.Configs)
 
 	state := &GameState{
 		LocationStates:    make(map[int]*LocationState),
-		CharsByLocation:   make(map[int][]*world.Character),
-		ObjectsByLocation: make(map[int][]*world.WorldObject),
+		CharsByLocation:   make(map[int][]*worldpkg.Character),
+		ObjectsByLocation: make(map[int][]*worldpkg.WorldObject),
 		Running:           true,
 	}
 
 	return &Game{
-		World:      w,
+		GameWorld:  w,
 		State:      state,
 		Registries: registries,
 		ExitChan:   make(chan bool),
@@ -39,7 +40,7 @@ func NewGame(w *world.World) *Game {
 
 func (g *Game) Initialize() {
 	// Инициализируем все слои для каждой локации
-	for _, loc := range g.World.Locations {
+	for _, loc := range g.GameWorld.Locations {
 		state := &LocationState{
 			Foreground: make([]int, len(loc.Foreground)),
 			Road:       make([]int, len(loc.Road)),
@@ -54,12 +55,12 @@ func (g *Game) Initialize() {
 		copy(state.Background, []int(loc.Background))
 
 		g.State.LocationStates[loc.ID] = state
-		g.State.CharsByLocation[loc.ID] = []*world.Character{}
-		g.State.ObjectsByLocation[loc.ID] = []*world.WorldObject{}
+		g.State.CharsByLocation[loc.ID] = []*worldpkg.Character{}
+		g.State.ObjectsByLocation[loc.ID] = []*worldpkg.WorldObject{}
 	}
 
 	// Распределяем персонажей по локациям
-	for _, char := range g.World.Characters {
+	for _, char := range g.GameWorld.Characters {
 		pos := int(char.X + 0.5)
 		locState := g.State.LocationStates[char.Location]
 
@@ -71,7 +72,7 @@ func (g *Game) Initialize() {
 	}
 
 	// Распределяем объекты по локациям
-	for _, obj := range g.World.Objects {
+	for _, obj := range g.GameWorld.Objects {
 		if obj.LocationID > 0 {
 			g.State.ObjectsByLocation[obj.LocationID] = append(g.State.ObjectsByLocation[obj.LocationID], obj)
 		}
@@ -79,7 +80,7 @@ func (g *Game) Initialize() {
 }
 
 // GetObjectAtPosition возвращает объект на позиции
-func (g *Game) GetObjectAtPosition(locationID int, pos int) *world.WorldObject {
+func (g *Game) GetObjectAtPosition(locationID int, pos int) *worldpkg.WorldObject {
 	for _, obj := range g.State.ObjectsByLocation[locationID] {
 		if obj.X == pos {
 			return obj
@@ -103,8 +104,13 @@ func (g *Game) GetGroundConfig(typeID int) *config.GroundTypeConfig {
 	return g.Registries.GetGroundTypeConfig(typeID)
 }
 
+// GetItemConfig возвращает конфигурацию предмета
+func (g *Game) GetItemConfig(typeID int) *config.ItemTypeConfig {
+	return g.Registries.GetItemTypeConfig(typeID)
+}
+
 // CheckRoadMovement проверяет возможность движения
-func (g *Game) CheckRoadMovement(char *world.Character, pos int) (bool, float64) {
+func (g *Game) CheckRoadMovement(char *worldpkg.Character, pos int) (bool, float64) {
 	locState := g.State.LocationStates[char.Location]
 	if pos < 0 || pos >= len(locState.Road) {
 		return false, 0.0
@@ -132,23 +138,177 @@ func (g *Game) CheckRoadMovement(char *world.Character, pos int) (bool, float64)
 	return true, roadConfig.SpeedMod
 }
 
-// GetInteractions возвращает доступные взаимодействия на позиции
-func (g *Game) GetInteractions(char *world.Character, pos int) []config.Interaction {
+// GetAvailableInteractions возвращает доступные взаимодействия для персонажа
+func (g *Game) GetAvailableInteractions(char *worldpkg.Character) []config.Interaction {
 	var interactions []config.Interaction
 
-	// Проверяем объект на позиции
-	obj := g.GetObjectAtPosition(char.Location, pos)
-	if obj != nil {
+	// Получаем позицию персонажа
+	pos := int(char.X + 0.5)
+
+	// Проверяем объекты на текущей позиции
+	if obj := g.GetObjectAtPosition(char.Location, pos); obj != nil {
 		objConfig := g.GetObjectConfig(obj.TypeID)
 		if objConfig != nil {
-			interactions = append(interactions, objConfig.Interactions...)
+			// Фильтруем взаимодействия по доступному инструменту
+			for _, interaction := range objConfig.Interactions {
+				if g.CanPerformInteraction(char, interaction) {
+					interactions = append(interactions, interaction)
+				}
+			}
+		}
+	}
+
+	// Проверяем объекты на соседних клетках
+	neighborPositions := []int{pos - 1, pos + 1}
+	for _, neighborPos := range neighborPositions {
+		if neighborPos >= 0 && neighborPos < len(g.State.LocationStates[char.Location].Road) {
+			if obj := g.GetObjectAtPosition(char.Location, neighborPos); obj != nil {
+				objConfig := g.GetObjectConfig(obj.TypeID)
+				if objConfig != nil {
+					for _, interaction := range objConfig.Interactions {
+						if g.CanPerformInteraction(char, interaction) {
+							interactions = append(interactions, interaction)
+						}
+					}
+				}
+			}
 		}
 	}
 
 	return interactions
 }
 
-func (g *Game) UpdateCharacter(char *world.Character, elapsed float64) bool {
+// CanPerformInteraction проверяет, может ли персонаж выполнить взаимодействие
+func (g *Game) CanPerformInteraction(char *worldpkg.Character, interaction config.Interaction) bool {
+	// Проверяем инструмент
+	if interaction.Tool == "hand" {
+		return char.HandsFree
+	}
+
+	// Проверяем, есть ли нужный инструмент в экипировке
+	if equippedID, ok := char.Equipped[interaction.Tool]; ok {
+		itemConfig := g.GetItemConfig(equippedID)
+		return itemConfig != nil
+	}
+
+	return false
+}
+
+// PerformInteraction выполняет взаимодействие с объектом
+func (g *Game) PerformInteraction(char *worldpkg.Character, objectID int, interaction config.Interaction) bool {
+	// Находим объект
+	obj := g.GetObjectAtPosition(char.Location, int(char.X+0.5))
+	if obj == nil || obj.ID != objectID {
+		// Проверяем соседние клетки
+		pos := int(char.X + 0.5)
+		neighborPositions := []int{pos - 1, pos, pos + 1}
+		for _, neighborPos := range neighborPositions {
+			if neighborPos >= 0 && neighborPos < len(g.State.LocationStates[char.Location].Road) {
+				if tempObj := g.GetObjectAtPosition(char.Location, neighborPos); tempObj != nil && tempObj.ID == objectID {
+					obj = tempObj
+					break
+				}
+			}
+		}
+	}
+
+	if obj == nil {
+		return false
+	}
+
+	// Проверяем возможность выполнения
+	if !g.CanPerformInteraction(char, interaction) {
+		fmt.Printf("%s не может выполнить это действие. Нужен инструмент: %s\n", char.Name, interaction.Tool)
+		return false
+	}
+
+	// Проверяем прочность объекта
+	objConfig := g.GetObjectConfig(obj.TypeID)
+	if objConfig == nil {
+		return false
+	}
+
+	// Выполняем взаимодействие
+	fmt.Printf("%s выполняет действие '%s' с %s...\n", char.Name, interaction.Type, objConfig.Name)
+
+	// Добавляем предметы в инвентарь
+	for _, result := range interaction.Results {
+		g.AddItemToInventory(char, result.ItemID, result.Count)
+	}
+
+	// Уменьшаем прочность объекта
+	obj.Durability--
+
+	// Если объект разрушен, удаляем его
+	if obj.Durability <= 0 {
+		g.RemoveObject(obj.ID)
+		fmt.Printf("%s разрушен!\n", objConfig.Name)
+	}
+
+	return true
+}
+
+// AddItemToInventory добавляет предмет в инвентарь персонажа
+func (g *Game) AddItemToInventory(char *worldpkg.Character, itemID int, count int) {
+	if char.Inventory == nil {
+		char.Inventory = make(map[int]worldpkg.InventoryItem)
+	}
+
+	// Ищем слот с таким же предметом
+	for slotID, item := range char.Inventory {
+		if item.ItemID == itemID {
+			itemConfig := g.GetItemConfig(itemID)
+			if itemConfig != nil && item.Count+count <= itemConfig.StackSize {
+				item.Count += count
+				char.Inventory[slotID] = item
+				itemConfig := g.GetItemConfig(itemID)
+				if itemConfig != nil {
+					fmt.Printf("Добавлено %d x %s в инвентарь %s\n", count, itemConfig.Name, char.Name)
+				}
+				return
+			}
+		}
+	}
+
+	// Ищем свободный слот
+	for slotID := 0; slotID < 20; slotID++ { // 20 слотов инвентаря
+		if _, exists := char.Inventory[slotID]; !exists {
+			itemConfig := g.GetItemConfig(itemID)
+			if itemConfig != nil {
+				char.Inventory[slotID] = worldpkg.InventoryItem{
+					ItemID: itemID,
+					Count:  count,
+				}
+				fmt.Printf("Добавлено %d x %s в слот %d инвентаря %s\n", count, itemConfig.Name, slotID, char.Name)
+				return
+			}
+		}
+	}
+
+	fmt.Printf("Инвентарь %s полон!\n", char.Name)
+}
+
+// RemoveObject удаляет объект из мира
+func (g *Game) RemoveObject(objectID int) {
+	delete(g.GameWorld.Objects, objectID)
+
+	// Удаляем из локаций
+	for _, loc := range g.GameWorld.Locations {
+		delete(loc.Objects, objectID)
+	}
+
+	// Удаляем из состояния игры
+	for locID, objects := range g.State.ObjectsByLocation {
+		for i, obj := range objects {
+			if obj.ID == objectID {
+				g.State.ObjectsByLocation[locID] = append(objects[:i], objects[i+1:]...)
+				break
+			}
+		}
+	}
+}
+
+func (g *Game) UpdateCharacter(char *worldpkg.Character, elapsed float64) bool {
 	if !g.State.Running {
 		return false
 	}
@@ -206,26 +366,13 @@ func (g *Game) UpdateCharacter(char *world.Character, elapsed float64) bool {
 			// Применяем модификатор скорости дороги
 			char.Speed = 0.7 * speedMod
 
-			// Проверяем доступные взаимодействия на новой позиции
-			interactions := g.GetInteractions(char, newPos)
-			if len(interactions) > 0 {
-				// Получаем объект на позиции для вывода информации
-				obj := g.GetObjectAtPosition(char.Location, newPos)
-				if obj != nil {
-					objConfig := g.GetObjectConfig(obj.TypeID)
-					if objConfig != nil {
-						fmt.Printf("%s находится возле %s\n", char.Name, objConfig.Name)
-					}
-				}
-			}
-
 			return true
 		}
 	}
 	return false
 }
 
-func (g *Game) TryTransition(char *world.Character, side string) {
+func (g *Game) TryTransition(char *worldpkg.Character, side string) {
 	loc := g.GetLocation(char.Location)
 	if loc == nil || loc.Transitions == nil {
 		return
@@ -292,7 +439,7 @@ func (g *Game) TryTransition(char *world.Character, side string) {
 	}
 }
 
-func (g *Game) removeCharFromSlice(slice []*world.Character, char *world.Character) []*world.Character {
+func (g *Game) removeCharFromSlice(slice []*worldpkg.Character, char *worldpkg.Character) []*worldpkg.Character {
 	for i, c := range slice {
 		if c.ID == char.ID {
 			return append(slice[:i], slice[i+1:]...)
@@ -301,8 +448,8 @@ func (g *Game) removeCharFromSlice(slice []*world.Character, char *world.Charact
 	return slice
 }
 
-func (g *Game) GetLocation(id int) *world.Location {
-	for _, loc := range g.World.Locations {
+func (g *Game) GetLocation(id int) *worldpkg.Location {
+	for _, loc := range g.GameWorld.Locations {
 		if loc.ID == id {
 			return loc
 		}
@@ -310,26 +457,188 @@ func (g *Game) GetLocation(id int) *world.Location {
 	return nil
 }
 
-func (g *Game) GetPlayerCharacter() *world.Character {
-	for _, char := range g.World.Characters {
-		if char.Controlled == g.World.PlayerID {
+func (g *Game) GetPlayerCharacter() *worldpkg.Character {
+	for _, char := range g.GameWorld.Characters {
+		if char.Controlled == g.GameWorld.PlayerID {
 			return char
 		}
 	}
 	return nil
 }
 
+// PrintInventory выводит инвентарь персонажа
+func (g *Game) PrintInventory(char *worldpkg.Character) {
+	fmt.Printf("\n=== ИНВЕНТАРЬ %s ===\n", char.Name)
+
+	if len(char.Inventory) == 0 {
+		fmt.Println("Инвентарь пуст")
+		return
+	}
+
+	totalWeight := 0.0
+	for slotID, item := range char.Inventory {
+		itemConfig := g.GetItemConfig(item.ItemID)
+		if itemConfig != nil {
+			slotWeight := float64(item.Count) * itemConfig.Weight
+			totalWeight += slotWeight
+			fmt.Printf("Слот %d: %d x %s (%.2f кг)\n",
+				slotID, item.Count, itemConfig.Name, slotWeight)
+		}
+	}
+
+	fmt.Printf("Общий вес: %.2f кг\n", totalWeight)
+
+	// Экипировка
+	if len(char.Equipped) > 0 {
+		fmt.Println("\nЭкипировка:")
+		for toolType, itemID := range char.Equipped {
+			itemConfig := g.GetItemConfig(itemID)
+			if itemConfig != nil {
+				fmt.Printf("  %s: %s\n", toolType, itemConfig.Name)
+			}
+		}
+	}
+
+	fmt.Printf("Руки свободны: %v\n", char.HandsFree)
+}
+
+// PrintAvailableInteractions выводит доступные взаимодействия
+func (g *Game) PrintAvailableInteractions(char *worldpkg.Character) {
+	interactions := g.GetAvailableInteractions(char)
+
+	if len(interactions) == 0 {
+		fmt.Println("Нет доступных взаимодействий")
+		return
+	}
+
+	fmt.Printf("\n=== ДОСТУПНЫЕ ВЗАИМОДЕЙСТВИЯ ДЛЯ %s ===\n", char.Name)
+
+	interactionIndex := 0
+	pos := int(char.X + 0.5)
+
+	// Проверяем текущую позицию
+	if obj := g.GetObjectAtPosition(char.Location, pos); obj != nil {
+		objConfig := g.GetObjectConfig(obj.TypeID)
+		if objConfig != nil {
+			fmt.Printf("\nОбъект на позиции %d: %s (ID: %d)\n", pos, objConfig.Name, obj.ID)
+			for _, interaction := range objConfig.Interactions {
+				if g.CanPerformInteraction(char, interaction) {
+					fmt.Printf("  [%d] %s (инструмент: %s, время: %dс)\n",
+						interactionIndex, interaction.Type, interaction.Tool, interaction.Time)
+					for _, result := range interaction.Results {
+						itemConfig := g.GetItemConfig(result.ItemID)
+						if itemConfig != nil {
+							fmt.Printf("      -> %d x %s\n", result.Count, itemConfig.Name)
+						}
+					}
+					interactionIndex++
+				}
+			}
+		}
+	}
+
+	// Проверяем соседние клетки
+	neighborPositions := []int{pos - 1, pos + 1}
+	for _, neighborPos := range neighborPositions {
+		if neighborPos >= 0 && neighborPos < len(g.State.LocationStates[char.Location].Road) {
+			if obj := g.GetObjectAtPosition(char.Location, neighborPos); obj != nil {
+				objConfig := g.GetObjectConfig(obj.TypeID)
+				if objConfig != nil {
+					fmt.Printf("\nОбъект на позиции %d: %s (ID: %d)\n", neighborPos, objConfig.Name, obj.ID)
+					for _, interaction := range objConfig.Interactions {
+						if g.CanPerformInteraction(char, interaction) {
+							fmt.Printf("  [%d] %s (инструмент: %s, время: %dс)\n",
+								interactionIndex, interaction.Type, interaction.Tool, interaction.Time)
+							for _, result := range interaction.Results {
+								itemConfig := g.GetItemConfig(result.ItemID)
+								if itemConfig != nil {
+									fmt.Printf("      -> %d x %s\n", result.Count, itemConfig.Name)
+								}
+							}
+							interactionIndex++
+						}
+					}
+				}
+			}
+		}
+	}
+
+	fmt.Println("\nДля выполнения действия введите: act <ID объекта> <номер действия>")
+}
+
+// PerformInteractionByIndex выполняет взаимодействие по индексу
+func (g *Game) PerformInteractionByIndex(char *worldpkg.Character, objectID int, interactionIndex int) {
+	// Находим объект
+	obj := g.GetObjectAtPosition(char.Location, int(char.X+0.5))
+	if obj == nil || obj.ID != objectID {
+		// Проверяем соседние клетки
+		pos := int(char.X + 0.5)
+		neighborPositions := []int{pos - 1, pos, pos + 1}
+		for _, neighborPos := range neighborPositions {
+			if neighborPos >= 0 && neighborPos < len(g.State.LocationStates[char.Location].Road) {
+				if tempObj := g.GetObjectAtPosition(char.Location, neighborPos); tempObj != nil && tempObj.ID == objectID {
+					obj = tempObj
+					break
+				}
+			}
+		}
+	}
+
+	if obj == nil {
+		fmt.Printf("Объект с ID %d не найден\n", objectID)
+		return
+	}
+
+	objConfig := g.GetObjectConfig(obj.TypeID)
+	if objConfig == nil {
+		fmt.Printf("Конфигурация объекта не найдена\n")
+		return
+	}
+
+	// Находим взаимодействие по индексу
+	index := 0
+	for _, interaction := range objConfig.Interactions {
+		if g.CanPerformInteraction(char, interaction) {
+			if index == interactionIndex {
+				g.PerformInteraction(char, objectID, interaction)
+				return
+			}
+			index++
+		}
+	}
+
+	fmt.Printf("Действие с индексом %d не найдено или недоступно\n", interactionIndex)
+}
+
 func (g *Game) PrintState() {
 	fmt.Println("\n=== СОСТОЯНИЕ МИРА ===")
-	fmt.Printf("ID игрока: %d\n", g.World.PlayerID)
+	fmt.Printf("ID игрока: %d\n", g.GameWorld.PlayerID)
 
-	for _, loc := range g.World.Locations {
+	for _, loc := range g.GameWorld.Locations {
 		fmt.Printf("\nЛокация %d: %s\n", loc.ID, loc.Name)
 		locState := g.State.LocationStates[loc.ID]
 
+		// Выводим задний фон
+		fmt.Print("Задний фон:   [")
+		for i := 0; i < len(locState.Background); i++ {
+			if locState.Background[i] == 0 {
+				fmt.Print(" ")
+			} else {
+				objConfig := g.GetObjectConfig(locState.Background[i])
+				if objConfig != nil {
+					fmt.Print(objConfig.Name[0:1]) // Первая буква названия
+				} else {
+					fmt.Print("?")
+				}
+			}
+			if i < len(locState.Background)-1 {
+				fmt.Print(" ")
+			}
+		}
+		fmt.Println("]")
+
 		// Выводим дорожный слой с персонажами
-		fmt.Println("Дорожный слой с персонажами:")
-		fmt.Print("Дорога: [")
+		fmt.Print("Дорога:       [")
 		for i := 0; i < len(locState.Road); i++ {
 			if locState.Foreground[i] != 0 {
 				// Проверяем, персонаж ли это
@@ -342,7 +651,7 @@ func (g *Game) PrintState() {
 					}
 				}
 				if !isCharacter {
-					// Это объект на переднем плане
+					// Это объект на переднем плана
 					objConfig := g.GetObjectConfig(locState.Foreground[i])
 					if objConfig != nil {
 						fmt.Print(objConfig.Name[0:1])
@@ -367,7 +676,7 @@ func (g *Game) PrintState() {
 		fmt.Println("]")
 
 		// Выводим слой земли
-		fmt.Print("Земля:  [")
+		fmt.Print("Земля:        [")
 		for i := 0; i < len(locState.Ground); i++ {
 			groundConfig := g.GetGroundConfig(locState.Ground[i])
 			if groundConfig != nil {
@@ -381,20 +690,20 @@ func (g *Game) PrintState() {
 		}
 		fmt.Println("]")
 
-		// Выводим задний фон
-		fmt.Print("Задний фон: [")
-		for i := 0; i < len(locState.Background); i++ {
-			if locState.Background[i] == 0 {
+		// Выводим передний фон
+		fmt.Print("Передний фон: [")
+		for i := 0; i < len(locState.Foreground); i++ {
+			if locState.Foreground[i] == 0 {
 				fmt.Print(" ")
 			} else {
-				objConfig := g.GetObjectConfig(locState.Background[i])
+				objConfig := g.GetObjectConfig(locState.Foreground[i])
 				if objConfig != nil {
 					fmt.Print(objConfig.Name[0:1]) // Первая буква названия
 				} else {
 					fmt.Print("?")
 				}
 			}
-			if i < len(locState.Background)-1 {
+			if i < len(locState.Foreground)-1 {
 				fmt.Print(" ")
 			}
 		}
@@ -405,7 +714,7 @@ func (g *Game) PrintState() {
 			fmt.Println("Персонажи:")
 			for _, char := range chars {
 				controlStatus := "NPC"
-				if char.Controlled == g.World.PlayerID {
+				if char.Controlled == g.GameWorld.PlayerID {
 					controlStatus = "ИГРОК"
 				}
 				fmt.Printf("  %s (ID: %d) поз: %.1f, напр: %d, верт: %d, скорость: %.1f [%s]\n",
@@ -431,13 +740,14 @@ func (g *Game) PrintState() {
 	// Выводим информацию о реестрах
 	if g.Registries != nil {
 		fmt.Println("\n=== ИНФОРМАЦИЯ О РЕЕСТРАХ ===")
-		fmt.Printf("Типов объектов: %d, Типов дорог: %d, Типов земли: %d\n",
+		fmt.Printf("Типов объектов: %d, Типов дорог: %d, Типов земли: %d, Типов предметов: %d\n",
 			len(g.Registries.ObjectTypeByID),
 			len(g.Registries.RoadTypeByID),
-			len(g.Registries.GroundTypeByID))
+			len(g.Registries.GroundTypeByID),
+			len(g.Registries.ItemTypeByID))
 	}
 
-	fmt.Println("\nКоманды: a/d - влево/вправо, w/s - вверх/вниз, stop - остановка, x - состояние, save - сохранить, exit - выход")
+	fmt.Println("\nКоманды: a/d - влево/вправо, w/s - вверх/вниз, stop - остановка, i - инвентарь, act - взаимодействия, x - состояние, save - сохранить, exit - выход")
 }
 
 func (g *Game) HandleInput(input string) {
@@ -470,17 +780,21 @@ func (g *Game) HandleInput(input string) {
 		playerChar.Direction = 0
 		playerChar.Vertical = 0
 		fmt.Printf("%s остановился\n", playerChar.Name)
+	case "i":
+		g.PrintInventory(playerChar)
+	case "act":
+		g.PrintAvailableInteractions(playerChar)
 	case "x":
 		g.PrintState()
 	case "save":
 		// Сохраняем только игровое состояние (без конфигов)
-		saveWorld := &world.World{
-			PlayerID:   g.World.PlayerID,
-			Characters: g.World.Characters,
-			Locations:  g.World.Locations,
-			Objects:    g.World.Objects,
+		saveWorld := &worldpkg.World{
+			PlayerID:   g.GameWorld.PlayerID,
+			Characters: g.GameWorld.Characters,
+			Locations:  g.GameWorld.Locations,
+			Objects:    g.GameWorld.Objects,
 		}
-		if err := world.SaveWorld(saveWorld, "data/save/world.json"); err != nil {
+		if err := worldpkg.SaveWorld(saveWorld, "data/save/world.json"); err != nil {
 			fmt.Printf("Ошибка сохранения: %v\n", err)
 		} else {
 			fmt.Println("Мир сохранен в data/save/world.json")
@@ -489,7 +803,20 @@ func (g *Game) HandleInput(input string) {
 		g.State.Running = false
 		g.ExitChan <- true
 	default:
-		fmt.Println("Неизвестная команда. Доступные: a, d, w, s, stop, x, save, exit")
+		// Пробуем выполнить действие формата "act <id> <index>"
+		if strings.HasPrefix(input, "act ") {
+			parts := strings.Split(input, " ")
+			if len(parts) == 3 {
+				var objectID, interactionIndex int
+				if _, err := fmt.Sscanf(parts[1], "%d", &objectID); err == nil {
+					if _, err := fmt.Sscanf(parts[2], "%d", &interactionIndex); err == nil {
+						g.PerformInteractionByIndex(playerChar, objectID, interactionIndex)
+						return
+					}
+				}
+			}
+		}
+		fmt.Println("Неизвестная команда. Доступные: a, d, w, s, stop, i, act, x, save, exit, act <id> <index>")
 	}
 }
 
@@ -509,7 +836,7 @@ func (g *Game) RunGameLoop() {
 			lastUpdate = currentTime
 
 			updated := false
-			for _, char := range g.World.Characters {
+			for _, char := range g.GameWorld.Characters {
 				if g.UpdateCharacter(char, elapsed) {
 					updated = true
 				}

@@ -7,6 +7,7 @@ type Registries struct {
 	ObjectTypeByID map[int]*config.ObjectTypeConfig
 	RoadTypeByID   map[int]*config.RoadTypeConfig
 	GroundTypeByID map[int]*config.GroundTypeConfig
+	ItemTypeByID   map[int]*config.ItemTypeConfig
 }
 
 // NewRegistries создает реестры из конфигов
@@ -15,6 +16,7 @@ func NewRegistries(configs *config.Configs) *Registries {
 		ObjectTypeByID: make(map[int]*config.ObjectTypeConfig),
 		RoadTypeByID:   make(map[int]*config.RoadTypeConfig),
 		GroundTypeByID: make(map[int]*config.GroundTypeConfig),
+		ItemTypeByID:   make(map[int]*config.ItemTypeConfig),
 	}
 
 	// Заполняем реестры объектов
@@ -30,6 +32,11 @@ func NewRegistries(configs *config.Configs) *Registries {
 	// Заполняем реестры земли
 	for _, groundType := range configs.GroundTypes {
 		r.GroundTypeByID[groundType.ID] = groundType
+	}
+
+	// Заполняем реестры предметов
+	for _, itemType := range configs.ItemTypes {
+		r.ItemTypeByID[itemType.ID] = itemType
 	}
 
 	return r
@@ -48,4 +55,9 @@ func (r *Registries) GetRoadTypeConfig(typeID int) *config.RoadTypeConfig {
 // GetGroundTypeConfig возвращает конфиг типа земли
 func (r *Registries) GetGroundTypeConfig(typeID int) *config.GroundTypeConfig {
 	return r.GroundTypeByID[typeID]
+}
+
+// GetItemTypeConfig возвращает конфиг типа предмета
+func (r *Registries) GetItemTypeConfig(typeID int) *config.ItemTypeConfig {
+	return r.ItemTypeByID[typeID]
 }

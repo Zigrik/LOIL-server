@@ -58,6 +58,27 @@ type WorldObject struct {
 	CustomData  map[string]interface{} `json:"custom_data"`  // Дополнительные данные
 }
 
+// InventoryItem - предмет в инвентаре
+type InventoryItem struct {
+	ItemID int `json:"item_id"` // ID типа предмета из конфига
+	Count  int `json:"count"`   // Количество
+}
+
+// Character - персонаж
+type Character struct {
+	ID         int                   `json:"id"`
+	Name       string                `json:"name"`
+	Location   int                   `json:"location"`
+	X          float64               `json:"x"`
+	Speed      float64               `json:"speed"`
+	Direction  int                   `json:"direction"`
+	Controlled int                   `json:"controlled"`
+	Vertical   int                   `json:"-"`
+	Inventory  map[int]InventoryItem `json:"inventory"`  // ID слота -> предмет
+	Equipped   map[string]int        `json:"equipped"`   // Тип инструмента -> item_id
+	HandsFree  bool                  `json:"hands_free"` // Руки свободны
+}
+
 // Location - локация мира
 type Location struct {
 	ID          int                    `json:"id"`
@@ -74,18 +95,6 @@ type Location struct {
 type Transition struct {
 	LocationID int    `json:"location_id"`
 	Type       string `json:"type"`
-}
-
-// Character - персонаж
-type Character struct {
-	ID         int     `json:"id"`
-	Name       string  `json:"name"`
-	Location   int     `json:"location"`
-	X          float64 `json:"x"`
-	Speed      float64 `json:"speed"`
-	Direction  int     `json:"direction"`
-	Controlled int     `json:"controlled"`
-	Vertical   int     `json:"-"`
 }
 
 // World - игровой мир

@@ -3,7 +3,7 @@ package main
 import (
 	"LOIL-server/internal/config"
 	"LOIL-server/internal/game"
-	"LOIL-server/internal/world"
+	worldpkg "LOIL-server/internal/world"
 	"bufio"
 	"fmt"
 	"os"
@@ -20,14 +20,14 @@ func main() {
 	}
 
 	// Загружаем мир с конфигами
-	w, err := world.LoadWorld("data/world.json", configs)
+	world, err := worldpkg.LoadWorld("data/world.json", configs)
 	if err != nil {
 		fmt.Printf("Ошибка загрузки мира: %v\n", err)
 		return
 	}
 
 	// Создаем и инициализируем игру
-	g := game.NewGame(w)
+	g := game.NewGame(world)
 	g.Initialize()
 
 	// Запускаем игровой цикл
