@@ -16,7 +16,8 @@
         "time": 2,
         "results": [
           {"item_id": 1, "count": 1}
-        ]
+        ],
+        "destroy_on_complete": true
       }
     ]
   },
@@ -37,7 +38,8 @@
         "time": 2,
         "results": [
           {"item_id": 2, "count": 1}
-        ]
+        ],
+        "destroy_on_complete": true
       }
     ]
   },
@@ -58,7 +60,8 @@
         "time": 3,
         "results": [
           {"item_id": 3, "count": 1}
-        ]
+        ],
+        "destroy_on_complete": true
       }
     ]
   },
@@ -79,7 +82,8 @@
         "time": 5,
         "results": [
           {"item_id": 4, "count": 1}
-        ]
+        ],
+        "destroy_on_complete": true
       }
     ]
   },
@@ -100,9 +104,23 @@
         "time": 5,
         "results": [
           {"item_id": 5, "count": 3}
-        ]
+        ],
+        "reduce_durability": 10,
+        "destroy_on_complete": false
       }
     ]
+  },
+  "raspberry_bush_empty": {
+    "id": 9,
+    "name": "Куст малины (пустой)",
+    "description": "Куст с ягодами малины (ягоды собраны)",
+    "foreground": true,
+    "road_level": false,
+    "background": true,
+    "size": 2,
+    "max_durability": 30,
+    "growth_time": 7200,
+    "interactions": []
   },
   "oak_sapling": {
     "id": 6,
@@ -114,7 +132,8 @@
     "size": 1,
     "max_durability": 10,
     "growth_time": 86400,
-    "interactions": []
+    "interactions": [],
+    "destroy_on_complete": true
   },
   "oak_young": {
     "id": 7,
@@ -126,7 +145,18 @@
     "size": 2,
     "max_durability": 50,
     "growth_time": 172800,
-    "interactions": []
+    "interactions": [
+      {
+        "type": "chop",
+        "tool": "axe",
+        "time": 15,
+        "results": [
+          {"item_id": 6, "count": 5}
+        ],
+        "transform_to": 10,
+        "destroy_on_complete": false
+      }
+    ]
   },
   "oak_adult": {
     "id": 8,
@@ -145,7 +175,9 @@
         "time": 30,
         "results": [
           {"item_id": 6, "count": 10}
-        ]
+        ],
+        "transform_to": 10,
+        "destroy_on_complete": false
       },
       {
         "type": "collect",
@@ -153,7 +185,30 @@
         "time": 5,
         "results": [
           {"item_id": 7, "count": 3}
-        ]
+        ],
+        "destroy_on_complete": false
+      }
+    ]
+  },
+  "oak_stump": {
+    "id": 10,
+    "name": "Пень дуба",
+    "description": "Остаток срубленного дуба",
+    "foreground": false,
+    "road_level": false,
+    "background": true,
+    "size": 1,
+    "max_durability": 20,
+    "growth_time": 259200,
+    "interactions": [
+      {
+        "type": "dig",
+        "tool": "shovel",
+        "time": 10,
+        "results": [
+          {"item_id": 3, "count": 2}
+        ],
+        "destroy_on_complete": true
       }
     ]
   }

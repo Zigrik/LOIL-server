@@ -2,8 +2,9 @@ package game
 
 import (
 	"LOIL-server/internal/config"
-	worldpkg "LOIL-server/internal/world" // Переименуем пакет
+	worldpkg "LOIL-server/internal/world"
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 )
@@ -22,10 +23,11 @@ func NewGame(w *worldpkg.World) *Game {
 	registries := worldpkg.NewRegistries(w.Configs)
 
 	state := &GameState{
-		LocationStates:    make(map[int]*LocationState),
-		CharsByLocation:   make(map[int][]*worldpkg.Character),
-		ObjectsByLocation: make(map[int][]*worldpkg.WorldObject),
-		Running:           true,
+		LocationStates:      make(map[int]*LocationState),
+		CharsByLocation:     make(map[int][]*worldpkg.Character),
+		ObjectsByLocation:   make(map[int][]*worldpkg.WorldObject),
+		CreaturesByLocation: make(map[int][]*worldpkg.Creature),
+		Running:             true,
 	}
 
 	return &Game{
@@ -57,6 +59,7 @@ func (g *Game) Initialize() {
 		g.State.LocationStates[loc.ID] = state
 		g.State.CharsByLocation[loc.ID] = []*worldpkg.Character{}
 		g.State.ObjectsByLocation[loc.ID] = []*worldpkg.WorldObject{}
+		g.State.CreaturesByLocation[loc.ID] = []*worldpkg.Creature{}
 	}
 
 	// Распределяем персонажей по локациям
@@ -76,6 +79,25 @@ func (g *Game) Initialize() {
 		if obj.LocationID > 0 {
 			g.State.ObjectsByLocation[obj.LocationID] = append(g.State.ObjectsByLocation[obj.LocationID], obj)
 		}
+	}
+
+	// Распределяем существ по локациям
+	for _, creature := range g.GameWorld.Creatures {
+		pos := int(creature.X + 0.5)
+		locState := g.State.LocationStates[creature.Location]
+
+		if pos >= 0 && pos < len(locState.Road) {
+			// Сохраняем ID существа (отрицательный для отличия от персонажей)
+			locState.Foreground[pos] = -creature.ID
+			g.State.CreaturesByLocation[creature.Location] = append(g.State.CreaturesByLocation[creature.Location], creature)
+		}
+	}
+
+	// Инициализируем начальное поведение существ
+	rand.Seed(time.Now().UnixNano())
+	for _, creature := range g.GameWorld.Creatures {
+		g.SetDefaultBehavior(creature)
+		creature.LastUpdate = time.Now()
 	}
 }
 
@@ -109,6 +131,31 @@ func (g *Game) GetItemConfig(typeID int) *config.ItemTypeConfig {
 	return g.Registries.GetItemTypeConfig(typeID)
 }
 
+// GetCreatureConfig возвращает конфигурацию существа
+func (g *Game) GetCreatureConfig(typeID int) *config.CreatureTypeConfig {
+	return g.Registries.GetCreatureTypeConfig(typeID)
+}
+
+// GetCreatureAtPosition возвращает существо на позиции
+func (g *Game) GetCreatureAtPosition(locationID int, pos int) *worldpkg.Creature {
+	for _, creature := range g.State.CreaturesByLocation[locationID] {
+		if int(creature.X+0.5) == pos {
+			return creature
+		}
+	}
+	return nil
+}
+
+// GetCreatureByID возвращает существо по ID
+func (g *Game) GetCreatureByID(id int) *worldpkg.Creature {
+	for _, creature := range g.GameWorld.Creatures {
+		if creature.ID == id {
+			return creature
+		}
+	}
+	return nil
+}
+
 // CheckRoadMovement проверяет возможность движения
 func (g *Game) CheckRoadMovement(char *worldpkg.Character, pos int) (bool, float64) {
 	locState := g.State.LocationStates[char.Location]
@@ -132,6 +179,25 @@ func (g *Game) CheckRoadMovement(char *worldpkg.Character, pos int) (bool, float
 	groundID := locState.Ground[pos]
 	groundConfig := g.GetGroundConfig(groundID)
 	if groundConfig != nil && !groundConfig.Walkable {
+		return false, 0.0
+	}
+
+	// Проверяем столкновение с другими персонажами или существами
+	if locState.Foreground[pos] != 0 && locState.Foreground[pos] != char.ID {
+		// Проверяем, существо ли это (отрицательный ID)
+		if locState.Foreground[pos] < 0 {
+			creatureID := -locState.Foreground[pos]
+			if creature := g.GetCreatureByID(creatureID); creature != nil {
+				creatureConfig := g.GetCreatureConfig(creature.TypeID)
+				if creatureConfig != nil {
+					fmt.Printf("[СТОЛКНОВЕНИЕ] На клетке %d %s (ID: %d)\n",
+						pos, creatureConfig.Name, creature.ID)
+				}
+			}
+		} else {
+			fmt.Printf("[СТОЛКНОВЕНИЕ] На клетке %d персонаж с ID: %d\n",
+				pos, locState.Foreground[pos])
+		}
 		return false, 0.0
 	}
 
@@ -194,6 +260,43 @@ func (g *Game) CanPerformInteraction(char *worldpkg.Character, interaction confi
 	return false
 }
 
+// AddToInventory добавляет предмет в инвентарь персонажа
+func (g *Game) AddToInventory(char *worldpkg.Character, itemID int, count int) {
+	if char.Inventory == nil {
+		char.Inventory = make(map[int]worldpkg.InventoryItem)
+	}
+
+	// Ищем слот с таким же предметом
+	for slotID, item := range char.Inventory {
+		if item.ItemID == itemID {
+			itemConfig := g.GetItemConfig(itemID)
+			if itemConfig != nil && item.Count+count <= itemConfig.StackSize {
+				item.Count += count
+				char.Inventory[slotID] = item
+				fmt.Printf("Добавлено %d x %s в инвентарь %s\n", count, itemConfig.Name, char.Name)
+				return
+			}
+		}
+	}
+
+	// Ищем свободный слот
+	for slotID := 0; slotID < 20; slotID++ {
+		if _, exists := char.Inventory[slotID]; !exists {
+			itemConfig := g.GetItemConfig(itemID)
+			if itemConfig != nil {
+				char.Inventory[slotID] = worldpkg.InventoryItem{
+					ItemID: itemID,
+					Count:  count,
+				}
+				fmt.Printf("Добавлено %d x %s в слот %d инвентаря %s\n", count, itemConfig.Name, slotID, char.Name)
+				return
+			}
+		}
+	}
+
+	fmt.Printf("Инвентарь %s полон!\n", char.Name)
+}
+
 // PerformInteraction выполняет взаимодействие с объектом
 func (g *Game) PerformInteraction(char *worldpkg.Character, objectID int, interaction config.Interaction) bool {
 	// Находим объект
@@ -213,6 +316,7 @@ func (g *Game) PerformInteraction(char *worldpkg.Character, objectID int, intera
 	}
 
 	if obj == nil {
+		fmt.Printf("Объект с ID %d не найден\n", objectID)
 		return false
 	}
 
@@ -233,63 +337,110 @@ func (g *Game) PerformInteraction(char *worldpkg.Character, objectID int, intera
 
 	// Добавляем предметы в инвентарь
 	for _, result := range interaction.Results {
-		g.AddItemToInventory(char, result.ItemID, result.Count)
+		g.AddToInventory(char, result.ItemID, result.Count)
+	}
+
+	// Определяем сколько прочности отнимать
+	reduceDurability := interaction.ReduceDurability
+	if reduceDurability == 0 {
+		reduceDurability = 1 // Значение по умолчанию
 	}
 
 	// Уменьшаем прочность объекта
-	obj.Durability--
+	obj.Durability -= reduceDurability
 
-	// Если объект разрушен, удаляем его
-	if obj.Durability <= 0 {
+	// Проверяем, нужно ли превращать объект в другой тип
+	if interaction.TransformTo > 0 && obj.Durability <= 0 {
+		// Превращаем объект
+		oldTypeID := obj.TypeID
+		obj.TypeID = interaction.TransformTo
+		obj.Durability = objConfig.MaxDurability // Сбрасываем прочность для нового объекта
+
+		// Обновляем конфиг
+		newObjConfig := g.GetObjectConfig(interaction.TransformTo)
+		if newObjConfig != nil {
+			fmt.Printf("%s превратился в %s!\n", objConfig.Name, newObjConfig.Name)
+		}
+
+		// Обновляем слой отображения
+		g.UpdateObjectLayer(obj.LocationID, obj.X, oldTypeID, interaction.TransformTo)
+	} else if interaction.DestroyOnComplete && obj.Durability <= 0 {
+		// Удаляем объект
 		g.RemoveObject(obj.ID)
-		fmt.Printf("%s разрушен!\n", objConfig.Name)
+		fmt.Printf("%s уничтожен!\n", objConfig.Name)
+	} else if obj.Durability <= 0 {
+		// Если объект должен быть уничтожен, но не указано явно
+		g.RemoveObject(obj.ID)
+		fmt.Printf("%s уничтожен!\n", objConfig.Name)
+	} else {
+		// Объект еще жив, но прочность уменьшилась
+		fmt.Printf("%s: прочность %d/%d\n", objConfig.Name, obj.Durability, objConfig.MaxDurability)
+
+		// Если это куст малины и прочность <= 0, превращаем в пустой куст
+		if obj.TypeID == 5 && obj.Durability <= 0 { // 5 - raspberry_bush
+			obj.TypeID = 9 // 9 - raspberry_bush_empty
+			obj.Durability = g.GetObjectConfig(9).MaxDurability
+			fmt.Printf("Куст малины опустел. Ягоды нужно ждать %d секунд.\n", g.GetObjectConfig(9).GrowthTime)
+		}
 	}
 
 	return true
 }
 
-// AddItemToInventory добавляет предмет в инвентарь персонажа
-func (g *Game) AddItemToInventory(char *worldpkg.Character, itemID int, count int) {
-	if char.Inventory == nil {
-		char.Inventory = make(map[int]worldpkg.InventoryItem)
+// UpdateObjectLayer обновляет слой отображения объекта
+func (g *Game) UpdateObjectLayer(locationID int, pos int, oldTypeID int, newTypeID int) {
+	locState := g.State.LocationStates[locationID]
+	if locState == nil {
+		return
 	}
 
-	// Ищем слот с таким же предметом
-	for slotID, item := range char.Inventory {
-		if item.ItemID == itemID {
-			itemConfig := g.GetItemConfig(itemID)
-			if itemConfig != nil && item.Count+count <= itemConfig.StackSize {
-				item.Count += count
-				char.Inventory[slotID] = item
-				itemConfig := g.GetItemConfig(itemID)
-				if itemConfig != nil {
-					fmt.Printf("Добавлено %d x %s в инвентарь %s\n", count, itemConfig.Name, char.Name)
-				}
-				return
-			}
-		}
+	// Обновляем слой в зависимости от типа объекта
+	objConfig := g.GetObjectConfig(newTypeID)
+	if objConfig == nil {
+		return
 	}
 
-	// Ищем свободный слот
-	for slotID := 0; slotID < 20; slotID++ { // 20 слотов инвентаря
-		if _, exists := char.Inventory[slotID]; !exists {
-			itemConfig := g.GetItemConfig(itemID)
-			if itemConfig != nil {
-				char.Inventory[slotID] = worldpkg.InventoryItem{
-					ItemID: itemID,
-					Count:  count,
-				}
-				fmt.Printf("Добавлено %d x %s в слот %d инвентаря %s\n", count, itemConfig.Name, slotID, char.Name)
-				return
-			}
-		}
+	// Определяем, в каком слое должен быть объект
+	if objConfig.Foreground && pos >= 0 && pos < len(locState.Foreground) {
+		locState.Foreground[pos] = newTypeID
+	} else if objConfig.Background && pos >= 0 && pos < len(locState.Background) {
+		locState.Background[pos] = newTypeID
 	}
-
-	fmt.Printf("Инвентарь %s полон!\n", char.Name)
 }
 
 // RemoveObject удаляет объект из мира
 func (g *Game) RemoveObject(objectID int) {
+	// Находим объект чтобы узнать его позицию и тип
+	var obj *worldpkg.WorldObject
+	for _, tempObj := range g.GameWorld.Objects {
+		if tempObj.ID == objectID {
+			obj = tempObj
+			break
+		}
+	}
+
+	if obj == nil {
+		return
+	}
+
+	// Получаем конфиг объекта
+	objConfig := g.GetObjectConfig(obj.TypeID)
+
+	// Обновляем слои отображения
+	if objConfig != nil {
+		locState := g.State.LocationStates[obj.LocationID]
+		if locState != nil {
+			pos := obj.X
+			if objConfig.Foreground && pos >= 0 && int(pos) < len(locState.Foreground) {
+				locState.Foreground[int(pos)] = 0
+			}
+			if objConfig.Background && pos >= 0 && int(pos) < len(locState.Background) {
+				locState.Background[int(pos)] = 0
+			}
+		}
+	}
+
+	// Удаляем из мира
 	delete(g.GameWorld.Objects, objectID)
 
 	// Удаляем из локаций
@@ -299,8 +450,8 @@ func (g *Game) RemoveObject(objectID int) {
 
 	// Удаляем из состояния игры
 	for locID, objects := range g.State.ObjectsByLocation {
-		for i, obj := range objects {
-			if obj.ID == objectID {
+		for i, tempObj := range objects {
+			if tempObj.ID == objectID {
 				g.State.ObjectsByLocation[locID] = append(objects[:i], objects[i+1:]...)
 				break
 			}
@@ -344,13 +495,6 @@ func (g *Game) UpdateCharacter(char *worldpkg.Character, elapsed float64) bool {
 			canMove, speedMod := g.CheckRoadMovement(char, newPos)
 			if !canMove {
 				fmt.Printf("[ПРЕПЯТСТВИЕ] %s не может идти по этой местности\n", char.Name)
-				char.X = float64(oldPos)
-				return false
-			}
-
-			// Проверка столкновения с другими персонажами
-			if locState.Foreground[newPos] != 0 && locState.Foreground[newPos] != char.ID {
-				fmt.Printf("[СТОЛКНОВЕНИЕ] На клетке %d персонаж с ID: %d\n", newPos, locState.Foreground[newPos])
 				char.X = float64(oldPos)
 				return false
 			}
@@ -466,6 +610,342 @@ func (g *Game) GetPlayerCharacter() *worldpkg.Character {
 	return nil
 }
 
+// UpdateCreature обновляет состояние существа
+func (g *Game) UpdateCreature(creature *worldpkg.Creature, elapsed float64) {
+	// Увеличиваем голод и жажду со временем
+	creature.Hunger = min(100, creature.Hunger+1)
+	creature.Thirst = min(100, creature.Thirst+1)
+
+	creature.LastUpdate = time.Now()
+
+	// Если у существа нет поведения, устанавливаем поведение по умолчанию
+	if creature.CurrentBehavior == nil {
+		g.SetDefaultBehavior(creature)
+		return
+	}
+
+	// Проверяем, не завершилось ли текущее поведение
+	if time.Since(creature.CurrentBehavior.StartTime).Seconds() >= creature.CurrentBehavior.Duration {
+		// Поведение завершено, выбираем следующее
+		g.ChooseNextBehavior(creature)
+		return
+	}
+
+	// Выполняем текущее поведение
+	switch creature.CurrentBehavior.Type {
+	case "wander":
+		g.ExecuteWanderBehavior(creature, elapsed)
+	case "eat":
+		g.ExecuteEatBehavior(creature, elapsed)
+	case "rest":
+		g.ExecuteRestBehavior(creature, elapsed)
+	case "walk":
+		g.ExecuteWalkBehavior(creature, elapsed)
+	}
+}
+
+// SetDefaultBehavior устанавливает поведение по умолчанию
+func (g *Game) SetDefaultBehavior(creature *worldpkg.Creature) {
+	creatureConfig := g.GetCreatureConfig(creature.TypeID)
+	if creatureConfig == nil {
+		return
+	}
+
+	creature.CurrentBehavior = &worldpkg.CreatureBehavior{
+		Type:      creatureConfig.DefaultBehavior,
+		TargetPos: -1,
+		StartTime: time.Now(),
+		Duration:  g.GetBehaviorDuration(creatureConfig.DefaultBehavior),
+	}
+}
+
+// ChooseNextBehavior выбирает следующее поведение для существа
+func (g *Game) ChooseNextBehavior(creature *worldpkg.Creature) {
+	creatureConfig := g.GetCreatureConfig(creature.TypeID)
+	if creatureConfig == nil {
+		return
+	}
+
+	// Проверяем голод
+	if creature.Hunger > 70 && contains(creatureConfig.Behaviors, "eat") {
+		// Пытаемся найти еду
+		if g.FindFoodNearby(creature) {
+			creature.CurrentBehavior = &worldpkg.CreatureBehavior{
+				Type:      "eat",
+				TargetPos: -1,
+				StartTime: time.Now(),
+				Duration:  5.0, // 5 секунд на еду
+			}
+			return
+		}
+	}
+
+	// Выбираем случайное поведение из доступных
+	availableBehaviors := creatureConfig.Behaviors
+	if len(availableBehaviors) == 0 {
+		availableBehaviors = []string{creatureConfig.DefaultBehavior}
+	}
+
+	randomBehavior := availableBehaviors[g.RandomInt(0, len(availableBehaviors)-1)]
+
+	creature.CurrentBehavior = &worldpkg.CreatureBehavior{
+		Type:      randomBehavior,
+		TargetPos: -1,
+		StartTime: time.Now(),
+		Duration:  g.GetBehaviorDuration(randomBehavior),
+	}
+
+	// Для блуждания и ходьбы устанавливаем цель
+	if randomBehavior == "wander" || randomBehavior == "walk" {
+		g.SetMovementTarget(creature)
+	}
+}
+
+// GetBehaviorDuration возвращает длительность поведения
+func (g *Game) GetBehaviorDuration(behaviorType string) float64 {
+	durations := map[string]float64{
+		"wander": float64(g.RandomInt(3, 15)), // 3-15 секунд
+		"eat":    5.0,                         // 5 секунд
+		"rest":   float64(g.RandomInt(5, 30)), // 5-30 секунд
+		"walk":   float64(g.RandomInt(2, 10)), // 2-10 секунд
+		"attack": 3.0,                         // 3 секунды
+		"flee":   5.0,                         // 5 секунд
+	}
+
+	if duration, ok := durations[behaviorType]; ok {
+		return duration
+	}
+	return 5.0 // По умолчанию 5 секунд
+}
+
+// ExecuteWanderBehavior выполняет блуждающее поведение
+func (g *Game) ExecuteWanderBehavior(creature *worldpkg.Creature, elapsed float64) {
+	if creature.CurrentBehavior.TargetPos == -1 {
+		g.SetMovementTarget(creature)
+	}
+
+	// Двигаемся к цели
+	g.MoveCreatureToTarget(creature, elapsed)
+}
+
+// ExecuteEatBehavior выполняет поведение еды
+func (g *Game) ExecuteEatBehavior(creature *worldpkg.Creature, elapsed float64) {
+	// Проверяем, есть ли еда на текущей позиции
+	pos := int(creature.X + 0.5)
+	obj := g.GetObjectAtPosition(creature.Location, pos)
+	if obj != nil {
+		objConfig := g.GetObjectConfig(obj.TypeID)
+		if objConfig != nil {
+			// Проверяем, является ли объект едой для этого существа
+			creatureConfig := g.GetCreatureConfig(creature.TypeID)
+			if creatureConfig != nil && g.IsEdibleForCreature(objConfig.ID, creatureConfig.FavoriteFoods) {
+				// Уменьшаем голод
+				creature.Hunger = max(0, creature.Hunger-20)
+				fmt.Printf("%s ест %s. Голод: %d\n", creature.Name, objConfig.Name, creature.Hunger)
+
+				// Уменьшаем прочность объекта (съедаем его)
+				obj.Durability -= 10
+				if obj.Durability <= 0 {
+					g.RemoveObject(obj.ID)
+				}
+			}
+		}
+	}
+}
+
+// ExecuteRestBehavior выполняет поведение отдыха
+func (g *Game) ExecuteRestBehavior(creature *worldpkg.Creature, elapsed float64) {
+	// Восстанавливаем здоровье во время отдыха
+	if creature.Health < creature.MaxHealth {
+		creature.Health = min(creature.MaxHealth, creature.Health+1)
+	}
+}
+
+// ExecuteWalkBehavior выполняет поведение ходьбы
+func (g *Game) ExecuteWalkBehavior(creature *worldpkg.Creature, elapsed float64) {
+	if creature.CurrentBehavior.TargetPos == -1 {
+		g.SetMovementTarget(creature)
+	}
+
+	// Двигаемся к цели
+	g.MoveCreatureToTarget(creature, elapsed)
+}
+
+// SetMovementTarget устанавливает цель движения для существа
+func (g *Game) SetMovementTarget(creature *worldpkg.Creature) {
+	locState := g.State.LocationStates[creature.Location]
+	if locState == nil || len(locState.Road) == 0 {
+		creature.CurrentBehavior.TargetPos = -1
+		return
+	}
+
+	// Выбираем случайную позицию в пределах 1-10 клеток от текущей
+	currentPos := int(creature.X + 0.5)
+	maxDistance := min(10, len(locState.Road)-1)
+	distance := g.RandomInt(1, maxDistance)
+	direction := 1
+	if g.RandomInt(0, 1) == 0 {
+		direction = -1
+	}
+
+	targetPos := currentPos + (direction * distance)
+
+	// Проверяем границы
+	if targetPos < 0 {
+		targetPos = 0
+	} else if targetPos >= len(locState.Road) {
+		targetPos = len(locState.Road) - 1
+	}
+
+	// Проверяем доступность клетки
+	if !g.IsPositionWalkable(creature.Location, targetPos) {
+		// Пробуем другую позицию
+		g.SetMovementTarget(creature)
+		return
+	}
+
+	creature.CurrentBehavior.TargetPos = targetPos
+}
+
+// MoveCreatureToTarget двигает существо к цели
+func (g *Game) MoveCreatureToTarget(creature *worldpkg.Creature, elapsed float64) {
+	if creature.CurrentBehavior.TargetPos == -1 {
+		return
+	}
+
+	currentPos := int(creature.X + 0.5)
+	targetPos := creature.CurrentBehavior.TargetPos
+
+	if currentPos == targetPos {
+		// Достигли цели
+		return
+	}
+
+	// Определяем направление
+	direction := 1
+	if targetPos < currentPos {
+		direction = -1
+	}
+
+	// Проверяем следующую клетку
+	nextPos := currentPos + direction
+	if !g.IsPositionWalkable(creature.Location, nextPos) {
+		// Клетка недоступна, выбираем новую цель
+		g.SetMovementTarget(creature)
+		return
+	}
+
+	// Двигаем существо
+	creatureConfig := g.GetCreatureConfig(creature.TypeID)
+	if creatureConfig == nil {
+		return
+	}
+
+	creature.X += float64(direction) * creatureConfig.Speed * elapsed
+
+	// Обновляем позицию в слое
+	locState := g.State.LocationStates[creature.Location]
+	if locState != nil && currentPos >= 0 && currentPos < len(locState.Foreground) {
+		// Очищаем старую позицию
+		locState.Foreground[currentPos] = 0
+		// Занимаем новую позицию
+		newPos := int(creature.X + 0.5)
+		if newPos >= 0 && newPos < len(locState.Foreground) {
+			locState.Foreground[newPos] = -creature.ID // Отрицательные ID для существ
+		}
+	}
+}
+
+// IsPositionWalkable проверяет, доступна ли позиция для движения
+func (g *Game) IsPositionWalkable(locationID int, pos int) bool {
+	if pos < 0 {
+		return false
+	}
+
+	locState := g.State.LocationStates[locationID]
+	if locState == nil || pos >= len(locState.Road) {
+		return false
+	}
+
+	// Проверяем дорогу
+	roadID := locState.Road[pos]
+	if roadID == -1 {
+		return false
+	}
+
+	// Проверяем землю
+	groundID := locState.Ground[pos]
+	groundConfig := g.GetGroundConfig(groundID)
+	if groundConfig != nil && !groundConfig.Walkable {
+		return false
+	}
+
+	// Проверяем, занята ли позиция другим существом или персонажем
+	if locState.Foreground[pos] != 0 {
+		return false
+	}
+
+	return true
+}
+
+// FindFoodNearby ищет еду рядом с существом
+func (g *Game) FindFoodNearby(creature *worldpkg.Creature) bool {
+	currentPos := int(creature.X + 0.5)
+	creatureConfig := g.GetCreatureConfig(creature.TypeID)
+	if creatureConfig == nil {
+		return false
+	}
+
+	// Проверяем текущую позицию
+	if obj := g.GetObjectAtPosition(creature.Location, currentPos); obj != nil {
+		if g.IsEdibleForCreature(obj.TypeID, creatureConfig.FavoriteFoods) {
+			return true
+		}
+	}
+
+	// Проверяем соседние клетки (в радиусе 3 клеток)
+	for distance := 1; distance <= 3; distance++ {
+		leftPos := currentPos - distance
+		rightPos := currentPos + distance
+
+		if leftPos >= 0 {
+			if obj := g.GetObjectAtPosition(creature.Location, leftPos); obj != nil {
+				if g.IsEdibleForCreature(obj.TypeID, creatureConfig.FavoriteFoods) {
+					// Устанавливаем цель движения к еде
+					creature.CurrentBehavior.TargetPos = leftPos
+					return true
+				}
+			}
+		}
+
+		if rightPos < len(g.State.LocationStates[creature.Location].Road) {
+			if obj := g.GetObjectAtPosition(creature.Location, rightPos); obj != nil {
+				if g.IsEdibleForCreature(obj.TypeID, creatureConfig.FavoriteFoods) {
+					creature.CurrentBehavior.TargetPos = rightPos
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// IsEdibleForCreature проверяет, съедобен ли объект для существа
+func (g *Game) IsEdibleForCreature(objectTypeID int, favoriteFoods []int) bool {
+	for _, foodID := range favoriteFoods {
+		if objectTypeID == foodID {
+			return true
+		}
+	}
+	return false
+}
+
+// RandomInt возвращает случайное целое число в диапазоне [min, max]
+func (g *Game) RandomInt(min, max int) int {
+	return min + rand.Intn(max-min+1)
+}
+
 // PrintInventory выводит инвентарь персонажа
 func (g *Game) PrintInventory(char *worldpkg.Character) {
 	fmt.Printf("\n=== ИНВЕНТАРЬ %s ===\n", char.Name)
@@ -520,11 +1000,28 @@ func (g *Game) PrintAvailableInteractions(char *worldpkg.Character) {
 	if obj := g.GetObjectAtPosition(char.Location, pos); obj != nil {
 		objConfig := g.GetObjectConfig(obj.TypeID)
 		if objConfig != nil {
-			fmt.Printf("\nОбъект на позиции %d: %s (ID: %d)\n", pos, objConfig.Name, obj.ID)
+			fmt.Printf("\nОбъект на позиции %d: %s (ID: %d) прочность: %d/%d\n",
+				pos, objConfig.Name, obj.ID, obj.Durability, objConfig.MaxDurability)
 			for _, interaction := range objConfig.Interactions {
 				if g.CanPerformInteraction(char, interaction) {
 					fmt.Printf("  [%d] %s (инструмент: %s, время: %dс)\n",
 						interactionIndex, interaction.Type, interaction.Tool, interaction.Time)
+
+					// Показываем эффекты
+					if interaction.ReduceDurability > 0 {
+						fmt.Printf("      отнимает прочность: %d\n", interaction.ReduceDurability)
+					}
+					if interaction.TransformTo > 0 {
+						newObjConfig := g.GetObjectConfig(interaction.TransformTo)
+						if newObjConfig != nil {
+							fmt.Printf("      превращается в: %s\n", newObjConfig.Name)
+						}
+					}
+					if interaction.DestroyOnComplete {
+						fmt.Printf("      уничтожает объект\n")
+					}
+
+					// Показываем награды
 					for _, result := range interaction.Results {
 						itemConfig := g.GetItemConfig(result.ItemID)
 						if itemConfig != nil {
@@ -544,11 +1041,28 @@ func (g *Game) PrintAvailableInteractions(char *worldpkg.Character) {
 			if obj := g.GetObjectAtPosition(char.Location, neighborPos); obj != nil {
 				objConfig := g.GetObjectConfig(obj.TypeID)
 				if objConfig != nil {
-					fmt.Printf("\nОбъект на позиции %d: %s (ID: %d)\n", neighborPos, objConfig.Name, obj.ID)
+					fmt.Printf("\nОбъект на позиции %d: %s (ID: %d) прочность: %d/%d\n",
+						neighborPos, objConfig.Name, obj.ID, obj.Durability, objConfig.MaxDurability)
 					for _, interaction := range objConfig.Interactions {
 						if g.CanPerformInteraction(char, interaction) {
 							fmt.Printf("  [%d] %s (инструмент: %s, время: %dс)\n",
 								interactionIndex, interaction.Type, interaction.Tool, interaction.Time)
+
+							// Показываем эффекты
+							if interaction.ReduceDurability > 0 {
+								fmt.Printf("      отнимает прочность: %d\n", interaction.ReduceDurability)
+							}
+							if interaction.TransformTo > 0 {
+								newObjConfig := g.GetObjectConfig(interaction.TransformTo)
+								if newObjConfig != nil {
+									fmt.Printf("      превращается в: %s\n", newObjConfig.Name)
+								}
+							}
+							if interaction.DestroyOnComplete {
+								fmt.Printf("      уничтожает объект\n")
+							}
+
+							// Показываем награды
 							for _, result := range interaction.Results {
 								itemConfig := g.GetItemConfig(result.ItemID)
 								if itemConfig != nil {
@@ -610,6 +1124,12 @@ func (g *Game) PerformInteractionByIndex(char *worldpkg.Character, objectID int,
 	fmt.Printf("Действие с индексом %d не найдено или недоступно\n", interactionIndex)
 }
 
+// UpdateWorldObjects обновляет состояние объектов мира
+func (g *Game) UpdateWorldObjects(elapsed float64) {
+	// В будущем здесь будет логика роста объектов
+	// Например, проверка growth_time и обновление growth_stage
+}
+
 func (g *Game) PrintState() {
 	fmt.Println("\n=== СОСТОЯНИЕ МИРА ===")
 	fmt.Printf("ID игрока: %d\n", g.GameWorld.PlayerID)
@@ -637,7 +1157,7 @@ func (g *Game) PrintState() {
 		}
 		fmt.Println("]")
 
-		// Выводим дорожный слой с персонажами
+		// Выводим дорожный слой с персонажами и существами
 		fmt.Print("Дорога:       [")
 		for i := 0; i < len(locState.Road); i++ {
 			if locState.Foreground[i] != 0 {
@@ -651,12 +1171,25 @@ func (g *Game) PrintState() {
 					}
 				}
 				if !isCharacter {
-					// Это объект на переднем плана
-					objConfig := g.GetObjectConfig(locState.Foreground[i])
-					if objConfig != nil {
-						fmt.Print(objConfig.Name[0:1])
+					// Проверяем, существо ли это (отрицательный ID)
+					if locState.Foreground[i] < 0 {
+						creatureID := -locState.Foreground[i]
+						if creature := g.GetCreatureByID(creatureID); creature != nil {
+							creatureConfig := g.GetCreatureConfig(creature.TypeID)
+							if creatureConfig != nil {
+								fmt.Printf("%c", strings.ToLower(creatureConfig.Name)[0])
+							} else {
+								fmt.Print("?")
+							}
+						}
 					} else {
-						fmt.Print("?")
+						// Это объект на переднем плане
+						objConfig := g.GetObjectConfig(locState.Foreground[i])
+						if objConfig != nil {
+							fmt.Print(objConfig.Name[0:1])
+						} else {
+							fmt.Print("?")
+						}
 					}
 				}
 			} else if locState.Road[i] == -1 {
@@ -722,6 +1255,27 @@ func (g *Game) PrintState() {
 			}
 		}
 
+		// Существа в этой локации
+		if creatures, ok := g.State.CreaturesByLocation[loc.ID]; ok && len(creatures) > 0 {
+			fmt.Println("Существа:")
+			for _, creature := range creatures {
+				creatureConfig := g.GetCreatureConfig(creature.TypeID)
+				if creatureConfig != nil {
+					behaviorInfo := "бездействует"
+					if creature.CurrentBehavior != nil {
+						behaviorInfo = creature.CurrentBehavior.Type
+						if creature.CurrentBehavior.TargetPos != -1 {
+							behaviorInfo += fmt.Sprintf(" -> клетка %d", creature.CurrentBehavior.TargetPos)
+						}
+					}
+
+					fmt.Printf("  %s (ID: %d) поз: %.1f, здоровье: %d/%d, голод: %d, поведение: %s\n",
+						creatureConfig.Name, creature.ID, creature.X,
+						creature.Health, creature.MaxHealth, creature.Hunger, behaviorInfo)
+				}
+			}
+		}
+
 		// Объекты в этой локации
 		if objects, ok := g.State.ObjectsByLocation[loc.ID]; ok && len(objects) > 0 {
 			fmt.Println("Объекты:")
@@ -740,11 +1294,12 @@ func (g *Game) PrintState() {
 	// Выводим информацию о реестрах
 	if g.Registries != nil {
 		fmt.Println("\n=== ИНФОРМАЦИЯ О РЕЕСТРАХ ===")
-		fmt.Printf("Типов объектов: %d, Типов дорог: %d, Типов земли: %d, Типов предметов: %d\n",
+		fmt.Printf("Типов объектов: %d, Типов дорог: %d, Типов земли: %d, Типов предметов: %d, Типов существ: %d\n",
 			len(g.Registries.ObjectTypeByID),
 			len(g.Registries.RoadTypeByID),
 			len(g.Registries.GroundTypeByID),
-			len(g.Registries.ItemTypeByID))
+			len(g.Registries.ItemTypeByID),
+			len(g.Registries.CreatureTypeByID))
 	}
 
 	fmt.Println("\nКоманды: a/d - влево/вправо, w/s - вверх/вниз, stop - остановка, i - инвентарь, act - взаимодействия, x - состояние, save - сохранить, exit - выход")
@@ -793,6 +1348,7 @@ func (g *Game) HandleInput(input string) {
 			Characters: g.GameWorld.Characters,
 			Locations:  g.GameWorld.Locations,
 			Objects:    g.GameWorld.Objects,
+			Creatures:  g.GameWorld.Creatures,
 		}
 		if err := worldpkg.SaveWorld(saveWorld, "data/save/world.json"); err != nil {
 			fmt.Printf("Ошибка сохранения: %v\n", err)
@@ -836,11 +1392,22 @@ func (g *Game) RunGameLoop() {
 			lastUpdate = currentTime
 
 			updated := false
+
+			// Обновляем персонажей
 			for _, char := range g.GameWorld.Characters {
 				if g.UpdateCharacter(char, elapsed) {
 					updated = true
 				}
 			}
+
+			// Обновляем существ
+			for _, creature := range g.GameWorld.Creatures {
+				g.UpdateCreature(creature, elapsed)
+				updated = true // Всегда обновляем, так как существа могут двигаться
+			}
+
+			// Обновляем объекты мира (рост, восстановление)
+			g.UpdateWorldObjects(elapsed)
 
 			if updated {
 				select {
@@ -862,4 +1429,14 @@ func (g *Game) PrintLayer(name string, layer []int, getSymbol func(int) string) 
 		fmt.Print(getSymbol(id))
 	}
 	fmt.Println("]")
+}
+
+// contains проверяет наличие строки в срезе
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }

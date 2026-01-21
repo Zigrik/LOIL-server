@@ -54,5 +54,21 @@
     "type": "seed",
     "stack_size": 100,
     "weight": 0.02
+  },
+  "axe": {
+    "id": 8,
+    "name": "Топор",
+    "description": "Инструмент для рубки деревьев",
+    "type": "tool",
+    "stack_size": 1,
+    "weight": 2.5
+  },
+  "shovel": {
+    "id": 9,
+    "name": "Лопата",
+    "description": "Инструмент для копания",
+    "type": "tool",
+    "stack_size": 1,
+    "weight": 3.0
   }
 }

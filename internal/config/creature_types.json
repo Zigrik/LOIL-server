@@ -1,0 +1,41 @@
+{
+  "human": {
+    "id": 1,
+    "name": "Человек",
+    "description": "Обычный человек",
+    "type": "humanoid",
+    "size": 1,
+    "health": 100,
+    "damage": 10,
+    "speed": 0.7,
+    "favorite_foods": [1, 5],
+    "behaviors": ["walk", "eat", "rest"],
+    "default_behavior": "walk"
+  },
+  "rabbit": {
+    "id": 2,
+    "name": "Заяц",
+    "description": "Дикий лесной заяц",
+    "type": "animal",
+    "size": 1,
+    "health": 30,
+    "damage": 5,
+    "speed": 1.2,
+    "favorite_foods": [5],
+    "behaviors": ["wander", "eat", "flee", "rest"],
+    "default_behavior": "wander"
+  },
+  "boar": {
+    "id": 3,
+    "name": "Кабан",
+    "description": "Дикий лесной кабан",
+    "type": "animal",
+    "size": 2,
+    "health": 150,
+    "damage": 25,
+    "speed": 0.9,
+    "favorite_foods": [1, 5, 7],
+    "behaviors": ["wander", "eat", "attack", "rest"],
+    "default_behavior": "wander"
+  }
+}

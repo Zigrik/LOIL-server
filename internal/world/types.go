@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // IntSlice - срез int с кастомной JSON сериализацией
@@ -97,11 +98,37 @@ type Transition struct {
 	Type       string `json:"type"`
 }
 
-// World - игровой мир
+// CreatureBehavior - состояние поведения существа
+type CreatureBehavior struct {
+	Type      string    `json:"type"`       // wander, eat, rest, attack, flee
+	TargetPos int       `json:"target_pos"` // Целевая позиция
+	Duration  float64   `json:"duration"`   // Длительность поведения в секундах
+	StartTime time.Time `json:"start_time"` // Время начала поведения
+	Cooldown  float64   `json:"cooldown"`   // Время перезарядки
+}
+
+// Creature - существо (NPC)
+type Creature struct {
+	ID              int                   `json:"id"`
+	TypeID          int                   `json:"type_id"`     // ID из конфига
+	Name            string                `json:"name"`        // Имя (если есть)
+	Location        int                   `json:"location"`    // ID локации
+	X               float64               `json:"x"`           // Позиция
+	Health          int                   `json:"health"`      // Текущее здоровье
+	MaxHealth       int                   `json:"max_health"`  // Максимальное здоровье
+	Hunger          int                   `json:"hunger"`      // Голод (0-100)
+	Thirst          int                   `json:"thirst"`      // Жажда (0-100)
+	CurrentBehavior *CreatureBehavior     `json:"behavior"`    // Текущее поведение
+	Inventory       map[int]InventoryItem `json:"inventory"`   // Инвентарь
+	LastUpdate      time.Time             `json:"last_update"` // Время последнего обновления
+}
+
+// Обновим структуру World для добавления существ
 type World struct {
 	PlayerID   int                  `json:"player_id"`
 	Characters []*Character         `json:"characters"`
 	Locations  []*Location          `json:"locations"`
-	Objects    map[int]*WorldObject `json:"objects"` // Все объекты мира
-	Configs    *config.Configs      `json:"-"`       // Конфигурации (не сериализуется в JSON)
+	Objects    map[int]*WorldObject `json:"objects"`   // Все объекты мира
+	Creatures  []*Creature          `json:"creatures"` // Все существа мира
+	Configs    *config.Configs      `json:"-"`         // Конфигурации (не сериализуется в JSON)
 }
