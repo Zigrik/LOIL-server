@@ -16,6 +16,7 @@ type Game struct {
 	ExitChan   chan bool
 	UpdateChan chan bool
 	InputChan  chan string
+	rand       *rand.Rand // Локальный генератор случайных чисел
 }
 
 func NewGame(w *worldpkg.World) *Game {
@@ -30,6 +31,10 @@ func NewGame(w *worldpkg.World) *Game {
 		Running:             true,
 	}
 
+	// Создаем локальный генератор случайных чисел
+	source := rand.NewSource(time.Now().UnixNano())
+	random := rand.New(source)
+
 	return &Game{
 		GameWorld:  w,
 		State:      state,
@@ -37,7 +42,27 @@ func NewGame(w *worldpkg.World) *Game {
 		ExitChan:   make(chan bool),
 		UpdateChan: make(chan bool, 100),
 		InputChan:  make(chan string, 10),
+		rand:       random,
 	}
+}
+
+// RandomInt возвращает случайное целое число в диапазоне [min, max]
+func (g *Game) RandomInt(min, max int) int {
+	if min > max {
+		min, max = max, min
+	}
+	if min == max {
+		return min
+	}
+	return min + g.rand.Intn(max-min+1)
+}
+
+// RandomFloat возвращает случайное число с плавающей точкой в диапазоне [min, max]
+func (g *Game) RandomFloat(min, max float64) float64 {
+	if min > max {
+		min, max = max, min
+	}
+	return min + g.rand.Float64()*(max-min)
 }
 
 func (g *Game) Initialize() {
@@ -62,16 +87,9 @@ func (g *Game) Initialize() {
 		g.State.CreaturesByLocation[loc.ID] = []*worldpkg.Creature{}
 	}
 
-	// Распределяем персонажей по локациям
+	// Распределяем персонажей по локациям (только в список, не в слой)
 	for _, char := range g.GameWorld.Characters {
-		pos := int(char.X + 0.5)
-		locState := g.State.LocationStates[char.Location]
-
-		if pos >= 0 && pos < len(locState.Road) {
-			// Сохраняем ID персонажа в слое переднего плана
-			locState.Foreground[pos] = char.ID
-			g.State.CharsByLocation[char.Location] = append(g.State.CharsByLocation[char.Location], char)
-		}
+		g.State.CharsByLocation[char.Location] = append(g.State.CharsByLocation[char.Location], char)
 	}
 
 	// Распределяем объекты по локациям
@@ -81,20 +99,19 @@ func (g *Game) Initialize() {
 		}
 	}
 
-	// Распределяем существ по локациям
+	// Распределяем существ по локациям (только в список)
 	for _, creature := range g.GameWorld.Creatures {
+		g.State.CreaturesByLocation[creature.Location] = append(g.State.CreaturesByLocation[creature.Location], creature)
+
+		// Но для отображения все же сохраняем в слой (для визуализации)
 		pos := int(creature.X + 0.5)
 		locState := g.State.LocationStates[creature.Location]
-
 		if pos >= 0 && pos < len(locState.Road) {
-			// Сохраняем ID существа (отрицательный для отличия от персонажей)
-			locState.Foreground[pos] = -creature.ID
-			g.State.CreaturesByLocation[creature.Location] = append(g.State.CreaturesByLocation[creature.Location], creature)
+			locState.Foreground[pos] = -creature.ID // Отрицательные ID для существ
 		}
 	}
 
 	// Инициализируем начальное поведение существ
-	rand.Seed(time.Now().UnixNano())
 	for _, creature := range g.GameWorld.Creatures {
 		g.SetDefaultBehavior(creature)
 		creature.LastUpdate = time.Now()
@@ -182,24 +199,8 @@ func (g *Game) CheckRoadMovement(char *worldpkg.Character, pos int) (bool, float
 		return false, 0.0
 	}
 
-	// Проверяем столкновение с другими персонажами или существами
-	if locState.Foreground[pos] != 0 && locState.Foreground[pos] != char.ID {
-		// Проверяем, существо ли это (отрицательный ID)
-		if locState.Foreground[pos] < 0 {
-			creatureID := -locState.Foreground[pos]
-			if creature := g.GetCreatureByID(creatureID); creature != nil {
-				creatureConfig := g.GetCreatureConfig(creature.TypeID)
-				if creatureConfig != nil {
-					fmt.Printf("[СТОЛКНОВЕНИЕ] На клетке %d %s (ID: %d)\n",
-						pos, creatureConfig.Name, creature.ID)
-				}
-			}
-		} else {
-			fmt.Printf("[СТОЛКНОВЕНИЕ] На клетке %d персонаж с ID: %d\n",
-				pos, locState.Foreground[pos])
-		}
-		return false, 0.0
-	}
+	// УБИРАЕМ проверку столкновений с другими персонажами или существами
+	// Персонажи и существа могут занимать одну клетку
 
 	return true, roadConfig.SpeedMod
 }
@@ -499,13 +500,15 @@ func (g *Game) UpdateCharacter(char *worldpkg.Character, elapsed float64) bool {
 				return false
 			}
 
-			// Освобождаем старую позицию
-			if oldPos >= 0 && oldPos < len(locState.Foreground) {
-				locState.Foreground[oldPos] = 0
-			}
+			// УБИРАЕМ проверку столкновения с другими персонажами
 
-			// Занимаем новую позицию
-			locState.Foreground[newPos] = char.ID
+			// Освобождаем старую позицию (НЕ НУЖНО - персонажи могут занимать одну клетку)
+			// if oldPos >= 0 && oldPos < len(locState.Foreground) {
+			//     locState.Foreground[oldPos] = 0
+			// }
+
+			// Занимаем новую позицию (НЕ НУЖНО - персонажи могут занимать одну клетку)
+			// locState.Foreground[newPos] = char.ID
 
 			// Применяем модификатор скорости дороги
 			char.Speed = 0.7 * speedMod
@@ -544,35 +547,25 @@ func (g *Game) TryTransition(char *worldpkg.Character, side string) {
 	}
 
 	if trans, ok := loc.Transitions[transitionKey]; ok && trans != nil {
-		// Удаляем из старой локации
+		// Удаляем из старой локации (только из списка)
 		oldLocID := char.Location
-		oldPos := int(char.X + 0.5)
-		oldLocState := g.State.LocationStates[oldLocID]
-
-		if oldPos >= 0 && oldPos < len(oldLocState.Foreground) {
-			oldLocState.Foreground[oldPos] = 0
-		}
 		g.State.CharsByLocation[oldLocID] = g.removeCharFromSlice(g.State.CharsByLocation[oldLocID], char)
 
 		// Перемещаем в новую локацию
 		char.Location = trans.LocationID
-		newLocState := g.State.LocationStates[char.Location]
-
-		if side == "left" {
-			char.X = float64(len(newLocState.Road) - 1)
-			char.Direction = 0
-		} else {
-			char.X = 0
-			char.Direction = 0
-		}
+		char.Direction = 0
 		char.Vertical = 0
 		char.Speed = 0.7 // Сбрасываем скорость к базовой
 
-		// Добавляем в новую локацию
-		newPos := int(char.X + 0.5)
-		if newPos >= 0 && newPos < len(newLocState.Foreground) {
-			newLocState.Foreground[newPos] = char.ID
+		// Устанавливаем позицию в зависимости от стороны перехода
+		newLocState := g.State.LocationStates[char.Location]
+		if side == "left" {
+			char.X = float64(len(newLocState.Road) - 1)
+		} else {
+			char.X = 0
 		}
+
+		// Добавляем в новую локацию
 		g.State.CharsByLocation[char.Location] = append(g.State.CharsByLocation[char.Location], char)
 
 		fmt.Printf("%s перешел в локацию %d\n", char.Name, char.Location)
@@ -612,9 +605,9 @@ func (g *Game) GetPlayerCharacter() *worldpkg.Character {
 
 // UpdateCreature обновляет состояние существа
 func (g *Game) UpdateCreature(creature *worldpkg.Creature, elapsed float64) {
-	// Увеличиваем голод и жажду со временем
-	creature.Hunger = min(100, creature.Hunger+1)
-	creature.Thirst = min(100, creature.Thirst+1)
+	// Увеличиваем голод со временем (медленнее)
+	creature.Hunger = min(100, creature.Hunger+int(elapsed*2))
+	creature.Thirst = min(100, creature.Thirst+int(elapsed*2))
 
 	creature.LastUpdate = time.Now()
 
@@ -635,27 +628,93 @@ func (g *Game) UpdateCreature(creature *worldpkg.Creature, elapsed float64) {
 	switch creature.CurrentBehavior.Type {
 	case "wander":
 		g.ExecuteWanderBehavior(creature, elapsed)
-	case "eat":
-		g.ExecuteEatBehavior(creature, elapsed)
 	case "rest":
 		g.ExecuteRestBehavior(creature, elapsed)
 	case "walk":
 		g.ExecuteWalkBehavior(creature, elapsed)
+	case "attack":
+		// Заглушка для атаки
+		g.ExecuteRestBehavior(creature, elapsed)
+	case "flee":
+		// Заглушка для бегства
+		g.ExecuteWanderBehavior(creature, elapsed)
 	}
 }
 
-// SetDefaultBehavior устанавливает поведение по умолчанию
-func (g *Game) SetDefaultBehavior(creature *worldpkg.Creature) {
-	creatureConfig := g.GetCreatureConfig(creature.TypeID)
-	if creatureConfig == nil {
+// ExecuteRestBehavior выполняет поведение отдыха
+func (g *Game) ExecuteRestBehavior(creature *worldpkg.Creature, elapsed float64) {
+	// Восстанавливаем здоровье во время отдыха
+	if creature.Health < creature.MaxHealth {
+		creature.Health = min(creature.MaxHealth, creature.Health+1)
+	}
+	// Медленнее увеличиваем голод во время отдыха
+	creature.Hunger = min(100, creature.Hunger+int(elapsed))
+}
+
+// ExecuteWanderBehavior выполняет блуждающее поведение
+func (g *Game) ExecuteWanderBehavior(creature *worldpkg.Creature, elapsed float64) {
+	currentPos := int(creature.X + 0.5)
+
+	// Если достигли цели или еще нет цели
+	if creature.CurrentBehavior.TargetPos == -1 || currentPos == creature.CurrentBehavior.TargetPos {
+		// Стоим на месте - проверяем, не нашли ли еду (только если еще не ели на этой остановке)
+		if !creature.CurrentBehavior.AteAtCurrentStop {
+			g.TryEatAtCurrentPosition(creature)
+		}
+
+		// Просто стоим на месте, время отсчитывается в Duration
 		return
 	}
 
-	creature.CurrentBehavior = &worldpkg.CreatureBehavior{
-		Type:      creatureConfig.DefaultBehavior,
-		TargetPos: -1,
-		StartTime: time.Now(),
-		Duration:  g.GetBehaviorDuration(creatureConfig.DefaultBehavior),
+	// Двигаемся к цели
+	g.MoveCreatureToTarget(creature, elapsed)
+}
+
+// ExecuteWalkBehavior выполняет поведение ходьбы (аналогично wander)
+func (g *Game) ExecuteWalkBehavior(creature *worldpkg.Creature, elapsed float64) {
+	currentPos := int(creature.X + 0.5)
+
+	// Если достигли цели или еще нет цели
+	if creature.CurrentBehavior.TargetPos == -1 || currentPos == creature.CurrentBehavior.TargetPos {
+		// Стоим на месте - проверяем, не нашли ли еду
+		if !creature.CurrentBehavior.AteAtCurrentStop {
+			g.TryEatAtCurrentPosition(creature)
+		}
+
+		// Просто стоим на месте
+		return
+	}
+
+	// Двигаемся к цели
+	g.MoveCreatureToTarget(creature, elapsed)
+}
+
+// TryEatAtCurrentPosition пытается съесть еду на текущей позиции (если есть)
+func (g *Game) TryEatAtCurrentPosition(creature *worldpkg.Creature) {
+	pos := int(creature.X + 0.5)
+	obj := g.GetObjectAtPosition(creature.Location, pos)
+
+	if obj != nil {
+		objConfig := g.GetObjectConfig(obj.TypeID)
+		if objConfig != nil {
+			// Проверяем, является ли объект едой для этого существа
+			creatureConfig := g.GetCreatureConfig(creature.TypeID)
+			if creatureConfig != nil && g.IsEdibleForCreature(objConfig.ID, creatureConfig.FavoriteFoods) {
+				// Уменьшаем голод
+				creature.Hunger = max(0, creature.Hunger-20)
+				fmt.Printf("%s нашел и ест %s. Голод: %d → %d\n",
+					creature.Name, objConfig.Name, creature.Hunger+20, creature.Hunger)
+
+				// Уменьшаем прочность объекта (съедаем его)
+				obj.Durability -= 10
+				if obj.Durability <= 0 {
+					g.RemoveObject(obj.ID)
+				}
+
+				// Помечаем, что уже поели на этой остановке
+				creature.CurrentBehavior.AteAtCurrentStop = true
+			}
+		}
 	}
 }
 
@@ -666,18 +725,18 @@ func (g *Game) ChooseNextBehavior(creature *worldpkg.Creature) {
 		return
 	}
 
-	// Проверяем голод
-	if creature.Hunger > 70 && contains(creatureConfig.Behaviors, "eat") {
-		// Пытаемся найти еду
-		if g.FindFoodNearby(creature) {
-			creature.CurrentBehavior = &worldpkg.CreatureBehavior{
-				Type:      "eat",
-				TargetPos: -1,
-				StartTime: time.Now(),
-				Duration:  5.0, // 5 секунд на еду
-			}
-			return
+	// Для животных всегда выбираем случайное поведение из доступных
+	// НЕ ИЩЕМ еду специально, только если очень голодны (>90), тогда отдыхаем
+	if creature.Hunger > 90 && contains(creatureConfig.Behaviors, "rest") {
+		// Если очень голоден, больше отдыхает
+		creature.CurrentBehavior = &worldpkg.CreatureBehavior{
+			Type:             "rest",
+			TargetPos:        -1,
+			StartTime:        time.Now(),
+			Duration:         float64(g.RandomInt(10, 30)), // Дольше отдыхает
+			AteAtCurrentStop: false,
 		}
+		return
 	}
 
 	// Выбираем случайное поведение из доступных
@@ -686,13 +745,26 @@ func (g *Game) ChooseNextBehavior(creature *worldpkg.Creature) {
 		availableBehaviors = []string{creatureConfig.DefaultBehavior}
 	}
 
-	randomBehavior := availableBehaviors[g.RandomInt(0, len(availableBehaviors)-1)]
+	// Убираем "eat" из списка, так как животные не ищут еду специально
+	filteredBehaviors := []string{}
+	for _, behavior := range availableBehaviors {
+		if behavior != "eat" { // Убираем целенаправленное поедание
+			filteredBehaviors = append(filteredBehaviors, behavior)
+		}
+	}
+
+	if len(filteredBehaviors) == 0 {
+		filteredBehaviors = []string{creatureConfig.DefaultBehavior}
+	}
+
+	randomBehavior := filteredBehaviors[g.RandomInt(0, len(filteredBehaviors)-1)]
 
 	creature.CurrentBehavior = &worldpkg.CreatureBehavior{
-		Type:      randomBehavior,
-		TargetPos: -1,
-		StartTime: time.Now(),
-		Duration:  g.GetBehaviorDuration(randomBehavior),
+		Type:             randomBehavior,
+		TargetPos:        -1,
+		StartTime:        time.Now(),
+		Duration:         g.GetBehaviorDuration(randomBehavior),
+		AteAtCurrentStop: false,
 	}
 
 	// Для блуждания и ходьбы устанавливаем цель
@@ -701,74 +773,18 @@ func (g *Game) ChooseNextBehavior(creature *worldpkg.Creature) {
 	}
 }
 
-// GetBehaviorDuration возвращает длительность поведения
-func (g *Game) GetBehaviorDuration(behaviorType string) float64 {
-	durations := map[string]float64{
-		"wander": float64(g.RandomInt(3, 15)), // 3-15 секунд
-		"eat":    5.0,                         // 5 секунд
-		"rest":   float64(g.RandomInt(5, 30)), // 5-30 секунд
-		"walk":   float64(g.RandomInt(2, 10)), // 2-10 секунд
-		"attack": 3.0,                         // 3 секунды
-		"flee":   5.0,                         // 5 секунд
-	}
-
-	if duration, ok := durations[behaviorType]; ok {
-		return duration
-	}
-	return 5.0 // По умолчанию 5 секунд
+// Убираем или упрощаем FindFoodNearby, так как животные не ищут еду
+// FindFoodNearby ищет еду рядом с существом (оставляем на будущее, но не используем для животных)
+func (g *Game) FindFoodNearby(creature *worldpkg.Creature) bool {
+	// Животные не ищут еду специально
+	return false
 }
 
-// ExecuteWanderBehavior выполняет блуждающее поведение
-func (g *Game) ExecuteWanderBehavior(creature *worldpkg.Creature, elapsed float64) {
-	if creature.CurrentBehavior.TargetPos == -1 {
-		g.SetMovementTarget(creature)
-	}
-
-	// Двигаемся к цели
-	g.MoveCreatureToTarget(creature, elapsed)
-}
-
-// ExecuteEatBehavior выполняет поведение еды
+// ExecuteEatBehavior - убираем или оставляем пустым, так как животные не ищут еду специально
 func (g *Game) ExecuteEatBehavior(creature *worldpkg.Creature, elapsed float64) {
-	// Проверяем, есть ли еда на текущей позиции
-	pos := int(creature.X + 0.5)
-	obj := g.GetObjectAtPosition(creature.Location, pos)
-	if obj != nil {
-		objConfig := g.GetObjectConfig(obj.TypeID)
-		if objConfig != nil {
-			// Проверяем, является ли объект едой для этого существа
-			creatureConfig := g.GetCreatureConfig(creature.TypeID)
-			if creatureConfig != nil && g.IsEdibleForCreature(objConfig.ID, creatureConfig.FavoriteFoods) {
-				// Уменьшаем голод
-				creature.Hunger = max(0, creature.Hunger-20)
-				fmt.Printf("%s ест %s. Голод: %d\n", creature.Name, objConfig.Name, creature.Hunger)
-
-				// Уменьшаем прочность объекта (съедаем его)
-				obj.Durability -= 10
-				if obj.Durability <= 0 {
-					g.RemoveObject(obj.ID)
-				}
-			}
-		}
-	}
-}
-
-// ExecuteRestBehavior выполняет поведение отдыха
-func (g *Game) ExecuteRestBehavior(creature *worldpkg.Creature, elapsed float64) {
-	// Восстанавливаем здоровье во время отдыха
-	if creature.Health < creature.MaxHealth {
-		creature.Health = min(creature.MaxHealth, creature.Health+1)
-	}
-}
-
-// ExecuteWalkBehavior выполняет поведение ходьбы
-func (g *Game) ExecuteWalkBehavior(creature *worldpkg.Creature, elapsed float64) {
-	if creature.CurrentBehavior.TargetPos == -1 {
-		g.SetMovementTarget(creature)
-	}
-
-	// Двигаемся к цели
-	g.MoveCreatureToTarget(creature, elapsed)
+	// Животные не выполняют специальное поведение "eat"
+	// Вместо этого они просто выбирают следующее поведение
+	g.ChooseNextBehavior(creature)
 }
 
 // SetMovementTarget устанавливает цель движения для существа
@@ -779,10 +795,13 @@ func (g *Game) SetMovementTarget(creature *worldpkg.Creature) {
 		return
 	}
 
-	// Выбираем случайную позицию в пределах 1-10 клеток от текущей
+	// Выбираем СЛУЧАЙНУЮ позицию в пределах 1-10 клеток
 	currentPos := int(creature.X + 0.5)
 	maxDistance := min(10, len(locState.Road)-1)
+
+	// Случайное расстояние (1-10 клеток)
 	distance := g.RandomInt(1, maxDistance)
+	// Случайное направление (влево или вправо)
 	direction := 1
 	if g.RandomInt(0, 1) == 0 {
 		direction = -1
@@ -799,12 +818,18 @@ func (g *Game) SetMovementTarget(creature *worldpkg.Creature) {
 
 	// Проверяем доступность клетки
 	if !g.IsPositionWalkable(creature.Location, targetPos) {
-		// Пробуем другую позицию
-		g.SetMovementTarget(creature)
-		return
+		// Если клетка недоступна, пробуем ближе
+		for i := 1; i < distance; i++ {
+			tryPos := currentPos + (direction * i)
+			if tryPos >= 0 && tryPos < len(locState.Road) && g.IsPositionWalkable(creature.Location, tryPos) {
+				targetPos = tryPos
+				break
+			}
+		}
 	}
 
 	creature.CurrentBehavior.TargetPos = targetPos
+	creature.CurrentBehavior.AteAtCurrentStop = false // Сбрасываем флаг при движении к новой цели
 }
 
 // MoveCreatureToTarget двигает существо к цели
@@ -827,7 +852,7 @@ func (g *Game) MoveCreatureToTarget(creature *worldpkg.Creature, elapsed float64
 		direction = -1
 	}
 
-	// Проверяем следующую клетку
+	// Проверяем следующую клетку на доступность (только дорога и земля)
 	nextPos := currentPos + direction
 	if !g.IsPositionWalkable(creature.Location, nextPos) {
 		// Клетка недоступна, выбираем новую цель
@@ -843,17 +868,62 @@ func (g *Game) MoveCreatureToTarget(creature *worldpkg.Creature, elapsed float64
 
 	creature.X += float64(direction) * creatureConfig.Speed * elapsed
 
-	// Обновляем позицию в слое
+	// Проверяем, не достигли ли мы цели в этом кадре
+	newPos := int(creature.X + 0.5)
+
+	// ОБНОВЛЯЕМ позицию в слое (для отображения)
 	locState := g.State.LocationStates[creature.Location]
-	if locState != nil && currentPos >= 0 && currentPos < len(locState.Foreground) {
-		// Очищаем старую позицию
-		locState.Foreground[currentPos] = 0
+	if locState != nil {
+		// Очищаем старую позицию (если это был последний на клетке)
+		if currentPos >= 0 && currentPos < len(locState.Foreground) {
+			// Проверяем, не осталось ли еще кого-то на клетке
+			// (пока просто очищаем - можно сделать счетчик)
+			locState.Foreground[currentPos] = 0
+		}
 		// Занимаем новую позицию
-		newPos := int(creature.X + 0.5)
 		if newPos >= 0 && newPos < len(locState.Foreground) {
-			locState.Foreground[newPos] = -creature.ID // Отрицательные ID для существ
+			// Помечаем отрицательным ID для отличия от персонажей
+			locState.Foreground[newPos] = -creature.ID
 		}
 	}
+
+	// Если достигли цели в этом кадре, сбрасываем флаг "поел"
+	if newPos == targetPos {
+		creature.CurrentBehavior.AteAtCurrentStop = false
+	}
+}
+
+// SetDefaultBehavior устанавливает поведение по умолчанию
+func (g *Game) SetDefaultBehavior(creature *worldpkg.Creature) {
+	creatureConfig := g.GetCreatureConfig(creature.TypeID)
+	if creatureConfig == nil {
+		return
+	}
+
+	creature.CurrentBehavior = &worldpkg.CreatureBehavior{
+		Type:             creatureConfig.DefaultBehavior,
+		TargetPos:        -1,
+		StartTime:        time.Now(),
+		Duration:         g.GetBehaviorDuration(creatureConfig.DefaultBehavior),
+		AteAtCurrentStop: false,
+	}
+}
+
+// GetBehaviorDuration возвращает длительность поведения
+func (g *Game) GetBehaviorDuration(behaviorType string) float64 {
+	durations := map[string]float64{
+		"wander": float64(g.RandomInt(2, 8)),   // 2-8 секунд стояния на месте
+		"eat":    5.0,                          // 5 секунд на еду
+		"rest":   float64(g.RandomInt(10, 30)), // 10-30 секунд отдыха
+		"walk":   float64(g.RandomInt(3, 10)),  // 3-10 секунд стояния
+		"attack": 3.0,                          // 3 секунды
+		"flee":   5.0,                          // 5 секунд
+	}
+
+	if duration, ok := durations[behaviorType]; ok {
+		return duration
+	}
+	return 5.0 // По умолчанию 5 секунд
 }
 
 // IsPositionWalkable проверяет, доступна ли позиция для движения
@@ -873,62 +943,19 @@ func (g *Game) IsPositionWalkable(locationID int, pos int) bool {
 		return false
 	}
 
-	// Проверяем землю
+	// Проверяем тип земли
 	groundID := locState.Ground[pos]
 	groundConfig := g.GetGroundConfig(groundID)
 	if groundConfig != nil && !groundConfig.Walkable {
 		return false
 	}
 
-	// Проверяем, занята ли позиция другим существом или персонажем
-	if locState.Foreground[pos] != 0 {
-		return false
-	}
+	// УБИРАЕМ проверку занятости позиции другими персонажами или существами
+	// if locState.Foreground[pos] != 0 {
+	//     return false
+	// }
 
 	return true
-}
-
-// FindFoodNearby ищет еду рядом с существом
-func (g *Game) FindFoodNearby(creature *worldpkg.Creature) bool {
-	currentPos := int(creature.X + 0.5)
-	creatureConfig := g.GetCreatureConfig(creature.TypeID)
-	if creatureConfig == nil {
-		return false
-	}
-
-	// Проверяем текущую позицию
-	if obj := g.GetObjectAtPosition(creature.Location, currentPos); obj != nil {
-		if g.IsEdibleForCreature(obj.TypeID, creatureConfig.FavoriteFoods) {
-			return true
-		}
-	}
-
-	// Проверяем соседние клетки (в радиусе 3 клеток)
-	for distance := 1; distance <= 3; distance++ {
-		leftPos := currentPos - distance
-		rightPos := currentPos + distance
-
-		if leftPos >= 0 {
-			if obj := g.GetObjectAtPosition(creature.Location, leftPos); obj != nil {
-				if g.IsEdibleForCreature(obj.TypeID, creatureConfig.FavoriteFoods) {
-					// Устанавливаем цель движения к еде
-					creature.CurrentBehavior.TargetPos = leftPos
-					return true
-				}
-			}
-		}
-
-		if rightPos < len(g.State.LocationStates[creature.Location].Road) {
-			if obj := g.GetObjectAtPosition(creature.Location, rightPos); obj != nil {
-				if g.IsEdibleForCreature(obj.TypeID, creatureConfig.FavoriteFoods) {
-					creature.CurrentBehavior.TargetPos = rightPos
-					return true
-				}
-			}
-		}
-	}
-
-	return false
 }
 
 // IsEdibleForCreature проверяет, съедобен ли объект для существа
@@ -939,11 +966,6 @@ func (g *Game) IsEdibleForCreature(objectTypeID int, favoriteFoods []int) bool {
 		}
 	}
 	return false
-}
-
-// RandomInt возвращает случайное целое число в диапазоне [min, max]
-func (g *Game) RandomInt(min, max int) int {
-	return min + rand.Intn(max-min+1)
 }
 
 // PrintInventory выводит инвентарь персонажа
@@ -1262,16 +1284,28 @@ func (g *Game) PrintState() {
 				creatureConfig := g.GetCreatureConfig(creature.TypeID)
 				if creatureConfig != nil {
 					behaviorInfo := "бездействует"
+					positionInfo := ""
+
 					if creature.CurrentBehavior != nil {
 						behaviorInfo = creature.CurrentBehavior.Type
 						if creature.CurrentBehavior.TargetPos != -1 {
-							behaviorInfo += fmt.Sprintf(" -> клетка %d", creature.CurrentBehavior.TargetPos)
+							currentPos := int(creature.X + 0.5)
+							if currentPos == creature.CurrentBehavior.TargetPos {
+								positionInfo = fmt.Sprintf(" (стоит на %d", currentPos)
+								if creature.CurrentBehavior.AteAtCurrentStop {
+									positionInfo += ", поел"
+								}
+								positionInfo += ")"
+							} else {
+								positionInfo = fmt.Sprintf(" (идет к %d из %d)",
+									creature.CurrentBehavior.TargetPos, currentPos)
+							}
 						}
 					}
 
-					fmt.Printf("  %s (ID: %d) поз: %.1f, здоровье: %d/%d, голод: %d, поведение: %s\n",
+					fmt.Printf("  %s (ID: %d) поз: %.1f, здоровье: %d/%d, голод: %d, поведение: %s%s\n",
 						creatureConfig.Name, creature.ID, creature.X,
-						creature.Health, creature.MaxHealth, creature.Hunger, behaviorInfo)
+						creature.Health, creature.MaxHealth, creature.Hunger, behaviorInfo, positionInfo)
 				}
 			}
 		}
@@ -1439,4 +1473,77 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// AddCreatureToLocation добавляет существо в локацию
+func (g *Game) AddCreatureToLocation(creature *worldpkg.Creature, locationID int) {
+	if creature == nil {
+		return
+	}
+
+	if g.State.CreaturesByLocation == nil {
+		g.State.CreaturesByLocation = make(map[int][]*worldpkg.Creature)
+	}
+
+	// Удаляем из старой локации (если была)
+	for locID, creatures := range g.State.CreaturesByLocation {
+		for i, c := range creatures {
+			if c.ID == creature.ID {
+				g.State.CreaturesByLocation[locID] = append(creatures[:i], creatures[i+1:]...)
+				break
+			}
+		}
+	}
+
+	// Добавляем в новую
+	g.State.CreaturesByLocation[locationID] = append(g.State.CreaturesByLocation[locationID], creature)
+
+	// Обновляем позицию в слое
+	pos := int(creature.X + 0.5)
+	locState := g.State.LocationStates[locationID]
+	if locState != nil && pos >= 0 && pos < len(locState.Foreground) {
+		locState.Foreground[pos] = -creature.ID // Отрицательные ID для существ
+	}
+}
+
+// RemoveCreature удаляет существо из игры
+func (g *Game) RemoveCreature(creatureID int) {
+	// Находим существо
+	var creature *worldpkg.Creature
+	var creatureIndex int = -1
+	for i, c := range g.GameWorld.Creatures {
+		if c.ID == creatureID {
+			creature = c
+			creatureIndex = i
+			break
+		}
+	}
+
+	if creature == nil {
+		return
+	}
+
+	// Удаляем из слоя отображения
+	locState := g.State.LocationStates[creature.Location]
+	if locState != nil {
+		pos := int(creature.X + 0.5)
+		if pos >= 0 && pos < len(locState.Foreground) && locState.Foreground[pos] == -creature.ID {
+			locState.Foreground[pos] = 0
+		}
+	}
+
+	// Удаляем из списка существ по локации
+	if creatures, ok := g.State.CreaturesByLocation[creature.Location]; ok {
+		for i, c := range creatures {
+			if c.ID == creatureID {
+				g.State.CreaturesByLocation[creature.Location] = append(creatures[:i], creatures[i+1:]...)
+				break
+			}
+		}
+	}
+
+	// Удаляем из общего списка существ
+	if creatureIndex >= 0 {
+		g.GameWorld.Creatures = append(g.GameWorld.Creatures[:creatureIndex], g.GameWorld.Creatures[creatureIndex+1:]...)
+	}
 }

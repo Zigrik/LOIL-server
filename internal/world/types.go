@@ -98,13 +98,14 @@ type Transition struct {
 	Type       string `json:"type"`
 }
 
-// CreatureBehavior - состояние поведения существа
+// Обновим структуру CreatureBehavior
 type CreatureBehavior struct {
-	Type      string    `json:"type"`       // wander, eat, rest, attack, flee
-	TargetPos int       `json:"target_pos"` // Целевая позиция
-	Duration  float64   `json:"duration"`   // Длительность поведения в секундах
-	StartTime time.Time `json:"start_time"` // Время начала поведения
-	Cooldown  float64   `json:"cooldown"`   // Время перезарядки
+	Type             string    `json:"type"`                // wander, eat, rest, attack, flee
+	TargetPos        int       `json:"target_pos"`          // Целевая позиция
+	Duration         float64   `json:"duration"`            // Длительность поведения в секундах
+	StartTime        time.Time `json:"start_time"`          // Время начала поведения
+	Cooldown         float64   `json:"cooldown"`            // Время перезарядки
+	AteAtCurrentStop bool      `json:"ate_at_current_stop"` // Уже поел на этой остановке
 }
 
 // Creature - существо (NPC)
@@ -123,7 +124,15 @@ type Creature struct {
 	LastUpdate      time.Time             `json:"last_update"` // Время последнего обновления
 }
 
-// Обновим структуру World для добавления существ
+// Interaction - базовая структура взаимодействия (для совместимости)
+// Более полная версия в config пакете
+type Interaction struct {
+	Type string `json:"type"`
+	Tool string `json:"tool"`
+	Time int    `json:"time"`
+}
+
+// Обновим структуру World
 type World struct {
 	PlayerID   int                  `json:"player_id"`
 	Characters []*Character         `json:"characters"`

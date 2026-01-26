@@ -26,6 +26,11 @@ func LoadWorld(filename string, configs *config.Configs) (*World, error) {
 		world.Objects = make(map[int]*WorldObject)
 	}
 
+	// Инициализируем существ если их нет
+	if world.Creatures == nil {
+		world.Creatures = []*Creature{}
+	}
+
 	// Собираем все объекты из локаций
 	for _, loc := range world.Locations {
 		if loc.Objects == nil {

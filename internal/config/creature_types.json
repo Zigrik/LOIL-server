@@ -9,7 +9,7 @@
     "damage": 10,
     "speed": 0.7,
     "favorite_foods": [1, 5],
-    "behaviors": ["walk", "eat", "rest"],
+    "behaviors": ["walk", "rest"],
     "default_behavior": "walk"
   },
   "rabbit": {
@@ -22,7 +22,7 @@
     "damage": 5,
     "speed": 1.2,
     "favorite_foods": [5],
-    "behaviors": ["wander", "eat", "flee", "rest"],
+    "behaviors": ["wander", "rest", "flee"],
     "default_behavior": "wander"
   },
   "boar": {
@@ -35,7 +35,7 @@
     "damage": 25,
     "speed": 0.9,
     "favorite_foods": [1, 5, 7],
-    "behaviors": ["wander", "eat", "attack", "rest"],
+    "behaviors": ["wander", "rest", "attack"],
     "default_behavior": "wander"
   }
 }
