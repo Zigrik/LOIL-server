@@ -3,8 +3,10 @@ package main
 import (
 	"LOIL-server/internal/config"
 	"LOIL-server/internal/game"
+	"LOIL-server/internal/network"
 	worldpkg "LOIL-server/internal/world"
 	"bufio"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -12,6 +14,11 @@ import (
 )
 
 func main() {
+	// Парсим флаги
+	serverAddr := flag.String("addr", ":8080", "Адрес WebSocket сервера")
+	headless := flag.Bool("headless", false, "Запуск без интерактивной консоли")
+	flag.Parse()
+
 	// Загружаем конфигурации
 	configs, err := config.LoadConfigs()
 	if err != nil {
@@ -19,21 +26,58 @@ func main() {
 		return
 	}
 
-	// Загружаем мир с конфигами
+	// Загружаем мир
 	world, err := worldpkg.LoadWorld("data/world.json", configs)
 	if err != nil {
 		fmt.Printf("Ошибка загрузки мира: %v\n", err)
 		return
 	}
 
-	// Создаем и инициализируем игру
-	g := game.NewGame(world)
+	if *headless {
+		// Серверный режим с сетью
+		runServerMode(world, *serverAddr)
+	} else {
+		// Консольный режим для отладки
+		runConsoleMode(world)
+	}
+}
+
+func runServerMode(w *worldpkg.World, addr string) {
+	fmt.Printf("Запуск сервера на %s...\n", addr)
+
+	// Создаем игру
+	g := game.NewGame(w)
 	g.Initialize()
 
-	// Запускаем игровой цикл
+	// Создаем мост между игрой и сетью
+	bridge := game.NewGameNetworkBridge(g)
+
+	// Настраиваем сервер
+	serverConfig := &network.ServerConfig{
+		Addr:           addr,
+		UpdateInterval: 100 * time.Millisecond, // 10 FPS
+		PingInterval:   30 * time.Second,
+		MaxMessageSize: 1024 * 10, // 10KB
+	}
+
+	// Создаем и запускаем сервер
+	server := network.NewServer(bridge, serverConfig)
+
+	// Запускаем игровой цикл в отдельной горутине
 	go g.RunGameLoop()
 
-	// Запускаем обработчик ввода
+	// Запускаем сервер (блокирующий вызов)
+	if err := server.Start(); err != nil {
+		fmt.Printf("Ошибка запуска сервера: %v\n", err)
+	}
+}
+
+func runConsoleMode(w *worldpkg.World) {
+	// Консольный режим без сети
+	g := game.NewGame(w)
+	g.Initialize()
+
+	go g.RunGameLoop()
 	runInputHandler(g)
 
 	fmt.Println("Игра завершена.")
@@ -42,8 +86,11 @@ func main() {
 func runInputHandler(g *game.Game) {
 	reader := bufio.NewReader(os.Stdin)
 
-	fmt.Println("=== ИГРА ЗАПУЩЕНА ===")
-	fmt.Println("Команды: a/d - влево/вправо, w/s - вверх/вниз, stop - остановка, x - состояние, save - сохранить, exit - выход")
+	fmt.Println("=== КОНСОЛЬНЫЙ РЕЖИМ ===")
+	fmt.Println("Команды: a/d - влево/вправо, w/s - вверх/вниз, stop - остановка")
+	fmt.Println("         i - инвентарь, act - взаимодействия, x - состояние")
+	fmt.Println("         save - сохранить, exit - выход")
+
 	g.PrintState()
 
 	for {
